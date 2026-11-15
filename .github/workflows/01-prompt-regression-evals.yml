@@ -1,0 +1,28 @@
+name: 01-prompt-regression-evals
+
+# Runs when this experiment's folder or this workflow changes, on pushes and on pull requests.
+on:
+  push:
+    paths:
+      - "01-prompt-regression-evals/**"
+      - ".github/workflows/01-prompt-regression-evals.yml"
+  pull_request:
+    paths:
+      - "01-prompt-regression-evals/**"
+      - ".github/workflows/01-prompt-regression-evals.yml"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: 01-prompt-regression-evals
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install uv
+      - run: uv sync --locked
+      # Harness tests only. They use a stand-in for the model, so no API key and no cost.
+      - run: uv run pytest

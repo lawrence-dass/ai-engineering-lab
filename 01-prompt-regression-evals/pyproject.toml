@@ -1,0 +1,16 @@
+[project]
+name = "prompt-regression-evals"
+version = "0.1.0"
+description = "A small eval suite that catches regressions when a prompt changes."
+requires-python = ">=3.11"
+dependencies = [
+    "anthropic>=1.0",
+    "pydantic>=2.7",
+]
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

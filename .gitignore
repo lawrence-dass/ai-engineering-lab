@@ -1,0 +1,15 @@
+# Python
+.venv/
+__pycache__/
+.pytest_cache/
+
+# macOS
+.DS_Store
+
+# Local configuration. Only the example file is committed.
+.env
+.env.*
+!.env.example
+
+# Pilot runs are for checking cost and plumbing. Published runs are committed.
+**/runs/pilot*/
