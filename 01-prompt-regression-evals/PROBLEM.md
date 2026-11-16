@@ -123,7 +123,7 @@ A solution is good enough when:
 |---|---|---|---|
 | 1 | How many repetitions per case are enough to call a result stable? | Lawrence | Open. Starting with 3 |
 | 2 | Should one broken case block a change, or only a drop past a threshold? | Lawrence | Open |
-| 3 | A customer reports a wrong charge without asking for the money back. Is that a refund request? The policy says no. | Lawrence | Open. Affects cases t16 and t37 |
+| 3 | A customer reports a wrong charge without asking for the money back. Is that a refund request? The policy says no. | Lawrence | Decided 2026-11-15: no. Only an explicit ask counts. t16 and t37 stay false |
 | 4 | Should fields carry different weights in the gate, given section 4? | Lawrence | Open |
 
 ## 11. Change log
@@ -132,3 +132,4 @@ A solution is good enough when:
 |---|---|
 | 2026-11-12 | First version. Written on the same day as the first build of the harness, before any run against a model. |
 | 2026-11-12 | Approved by the owner. Open questions carried into SOLUTION.md with the defaults in use. |
+| 2026-11-15 | Open question 3 decided after the blind labelling check: a reported wrong charge is not a refund request. The strict urgency rule was kept after the same check. |

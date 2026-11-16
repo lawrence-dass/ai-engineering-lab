@@ -1,0 +1,33 @@
+40 cases labelled
+  category: 80% agreement
+  urgency: 68% agreement
+  refund_requested: 88% agreement
+  invoice_id: 95% agreement
+  t05 category: you said 'bug', expected answer is 'account_access'
+  t09 category: you said 'billing', expected answer is 'how_to'
+  t09 urgency: you said 'high', expected answer is 'low'
+  t11 urgency: you said 'high', expected answer is 'low'
+  t13 urgency: you said 'medium', expected answer is 'low'
+  t15 category: you said 'how_to', expected answer is 'billing'
+  t15 urgency: you said 'medium', expected answer is 'low'
+  t16 refund_requested: you said True, expected answer is False
+  t17 urgency: you said 'high', expected answer is 'low'
+  t19 urgency: you said 'high', expected answer is 'low'
+  t20 urgency: you said 'medium', expected answer is 'low'
+  t21 refund_requested: you said False, expected answer is True
+  t22 urgency: you said 'medium', expected answer is 'low'
+  t22 refund_requested: you said True, expected answer is False
+  t25 urgency: you said 'high', expected answer is 'medium'
+  t26 urgency: you said 'high', expected answer is 'medium'
+  t26 invoice_id: you said 'INV-482136', expected answer is None
+  t28 category: you said 'how_to', expected answer is 'billing'
+  t28 urgency: you said 'medium', expected answer is 'low'
+  t30 category: you said 'account_access', expected answer is 'billing'
+  t30 urgency: you said 'high', expected answer is 'medium'
+  t31 invoice_id: you said None, expected answer is 'INV-205377'
+  t37 category: you said 'billing', expected answer is 'bug'
+  t37 refund_requested: you said True, expected answer is False
+  t39 category: you said 'other', expected answer is 'bug'
+  t39 urgency: you said 'high', expected answer is 'medium'
+  t40 category: you said 'other', expected answer is 'billing'
+  t40 refund_requested: you said False, expected answer is True

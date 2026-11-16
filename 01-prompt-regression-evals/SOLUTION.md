@@ -247,7 +247,7 @@ The tests use a stand-in for the model. Nothing here has been run against a real
 - **40 cases is below what the resources recommend for a pass rate.** The evaluation lesson in ai-engineering-from-scratch says 50 cases cannot detect a 5-point change and recommends 200 or more for release decisions. This suite is built to find which individual cases changed, which works at 40. Its pass rates should be read as rough.
 - **No held-out cases.** Every case is visible to whoever edits the prompt, so a prompt can be tuned to this set. The resources recommend a held-out set the prompt author never sees.
 - **No cases from real traffic.** The resources describe three sources for a test set: curated cases, adversarial cases and production samples. This set has the first two.
-- **The cases have one author so far.** The agreement check (5.17) exists but nobody has run it yet, so there is no measure of how arguable the labels are.
+- **The labels have been checked by one second person, once.** The blind check (5.17) on 2026-11-15 gave 80% agreement on category, 68% on urgency, 88% on refund and 95% on invoice. Every urgency disagreement rated higher than the policy. The owner kept the strict urgency rule. The round 1 file is kept unedited in `labels/blind_round1.*`; later corrections are not blind.
 
 ## 10. Testing
 
@@ -267,7 +267,7 @@ Carried over from [PROBLEM.md, section 10](PROBLEM.md#10-open-questions). The de
 |---|---|---|
 | 1 | How many repetitions are enough? | 3 |
 | 2 | Does one broken case block a change? | Yes. Now a setting (`--max-broken`), default 0 |
-| 3 | Is reporting a wrong charge a refund request? | No, per the policy |
+| 3 | Is reporting a wrong charge a refund request? | No. Decided by the owner on 2026-11-15 |
 | 4 | Should fields carry different weights in the gate? | No |
 
 ## 13. What came from the resources
@@ -293,3 +293,4 @@ What this experiment does that the reference project does not: it calls a live m
 | 2026-11-12 | Revised after reading the article 1 resources in full, which the first version was not based on. Added a fail-closed gate with tolerances (5.13) and fingerprints on every row (5.14). Added four known gaps and the table of what came from each resource. |
 | 2026-11-12 | Second revision after finishing the remaining resources. Added the per-tag breakdown (5.15), wrong-answer patterns (5.16) and the blind-label agreement check (5.17). |
 | 2026-11-14 | Added the run manifest (section 6) and the served model on every result row. |
+| 2026-11-15 | Recorded the blind labelling result and the decision on open question 3 (section 9, section 12). |
