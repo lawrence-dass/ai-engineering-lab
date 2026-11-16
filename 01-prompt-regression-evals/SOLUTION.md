@@ -53,6 +53,7 @@ One **job** is a single model call, identified by four values: model, prompt ver
 | Grader | `evals/grade.py` | Compares one output with one expected answer. No model calls |
 | Runner | `evals/run.py` | Schedules jobs, writes one row per finished job, logs failed calls separately, writes the run manifest |
 | Report | `evals/report.py` | Pass rates overall and per tag, per-field accuracy, wrong answers counted by pattern, cases that changed, and the gate |
+| Review simulation | `evals/review.py` | Applies a review rule to a finished run and counts the wrong answers it catches and misses. No model calls |
 | Agreement check | `evals/agreement.py` | Compares a second person's blind labels with the expected answers |
 | Case viewer | `evals/render_cases.py` | Generates `CASES.md` so the test set can be reviewed without reading JSON |
 
@@ -204,6 +205,16 @@ For each prompt version the report lists every kind of wrong answer with its fre
 
 *Source:* the human annotation chapter of the same study guide.
 
+### 5.18 A review rule, simulated after the run
+
+`evals/review.py` takes each ticket's repeated calls and decides what a production system would do with them. The answer is the majority of the calls, field by field. The ticket goes to a person when the calls disagree on a graded field, when a reply was unusable, or when the answer is `account_access`, which covers logins and possible security problems. The expected answer stands in for a reviewer who always corrects the ticket.
+
+*Why:* in production, code decides from a confidence signal and business rules whether a person checks an answer. That decision belongs in code, not in the model's output, so a threshold can change without a prompt change. The repeated calls the suite already makes give a free confidence signal: agreement. The simulation shows how many wrong answers that signal catches, and how many get past it because the model was consistently wrong.
+
+*Turned down:* asking the model for a confidence score. It changes the prompt and the output schema, which is itself a prompt edit and would make the run incomparable with the predictions. Self-reported scores also tend to be overconfident.
+
+*Limits:* three calls per ticket triple the cost in production. The account_access rule is one example rule, not a tuned policy. Forty tickets can show the method but cannot set a threshold.
+
 ## 6. Data formats
 
 **A case** (`cases/tickets.jsonl`):
@@ -262,7 +273,7 @@ The tests use a stand-in for the model. Nothing here has been run against a real
 
 ## 10. Testing
 
-30 tests in `tests/test_evals.py`, none of which call a model. They cover case validation, grading, the broken/flaky/fixed rule, resuming a run, the errors file, the report naming the right case, the per-tag and wrong-answer tables, label agreement, the run manifest, the OpenAI call (parsing, refusals, cut-off replies, cached tokens), the cost formula, and each way the gate fails closed. The runner accepts the triage function as an argument, which is how the tests substitute a stand-in.
+33 tests in `tests/test_evals.py`, none of which call a model. They cover case validation, grading, the broken/flaky/fixed rule, resuming a run, the errors file, the report naming the right case, the per-tag and wrong-answer tables, label agreement, the run manifest, the OpenAI call (parsing, refusals, cut-off replies, cached tokens), the cost formula, the review simulation, and each way the gate fails closed. The runner accepts the triage function as an argument, which is how the tests substitute a stand-in.
 
 ## 11. Cost
 
@@ -313,5 +324,6 @@ What this experiment does that the reference project does not: it calls a live m
 | 2026-11-12 | Revised after reading the article 1 resources in full, which the first version was not based on. Added a fail-closed gate with tolerances (5.13) and fingerprints on every row (5.14). Added four known gaps and the table of what came from each resource. |
 | 2026-11-12 | Second revision after finishing the remaining resources. Added the per-tag breakdown (5.15), wrong-answer patterns (5.16) and the blind-label agreement check (5.17). |
 | 2026-11-14 | Added the run manifest (section 6) and the served model on every result row. |
+| 2026-11-16 | Added the review simulation (5.18). |
 | 2026-11-15 | Added two OpenAI models (5.2, 5.10, section 11). Cache reads, cache writes and reasoning tokens are recorded on every row and priced separately. |
 | 2026-11-15 | Recorded the blind labelling result and the decision on open question 3 (section 9, section 12). |

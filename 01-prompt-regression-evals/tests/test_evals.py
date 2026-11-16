@@ -297,3 +297,37 @@ def test_cost_prices_cache_reads_and_writes_separately():
     assert cost_usd("opus", 1_000_000, 0) == 4.0
     assert cost_usd("opus", 0, 0, cache_read=1_000_000) == 0.2
     assert cost_usd("luna", 0, 1_000_000, cache_write=1_000_000) == 0.625
+
+
+# --- the review simulation ---------------------------------------------------
+
+from evals.review import decide, simulate
+
+
+def answer(**overrides):
+    return {**EXPECTED, "summary": "s", **overrides}
+
+
+def test_agreeing_calls_go_through_and_disagreeing_calls_go_to_review():
+    assert decide([answer(), answer(), answer()])["needs_review"] is False
+    split = decide([answer(), answer(urgency="low"), answer()])
+    assert split["needs_review"] is True and split["reasons"] == ["disagreement:urgency"]
+    assert split["answer"]["urgency"] == "high"  # the majority
+
+
+def test_unusable_replies_and_the_account_access_rule_force_review():
+    assert decide([answer(), None, answer()])["reasons"] == ["unusable_reply"]
+    login = answer(category="account_access")
+    assert decide([login, login, login])["reasons"] == ["rule:account_access"]
+
+
+def test_simulation_counts_caught_and_slipped_wrong_answers():
+    def rows(case_id, outputs):
+        return [{"model": "haiku", "version": "v1_baseline", "case_id": case_id, "rep": i,
+                 "expected": EXPECTED, "output": out, "passed": out == answer()} for i, out in enumerate(outputs)]
+    data = (rows("a", [answer()] * 3)                                   # right, automatic
+            + rows("b", [answer(urgency="low")] * 3)                    # wrong and consistent: slips through
+            + rows("c", [answer(urgency="low"), answer(), answer(urgency="low")]))  # wrong, calls disagree: caught
+    m = simulate(data)[("haiku", "v1_baseline")]
+    assert (m["auto_right"], m["auto_wrong"], m["wrong_caught"], m["reviewed"]) == (1, 1, 1, 1)
+    assert m["slipped"] == ["b"]

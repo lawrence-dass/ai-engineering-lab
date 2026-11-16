@@ -52,6 +52,7 @@ The report reads the saved rows and makes no model calls.
 ```bash
 uv run python -m evals.report --run main
 uv run python -m evals.report --run main --gate   # exits 1 if a case broke or evidence is missing
+uv run python -m evals.review --run main          # what a human review rule would have caught
 ```
 
 ## Evidence
@@ -81,6 +82,7 @@ Pilot runs are ignored by git. The run behind the article is committed, and will
 | `evals/grade.py` | Exact-match grading of four fields. A case passes only if all four are right |
 | `evals/run.py` | Runs model × prompt version × case × repetition, writes one row per call, resumable. Writes `manifest.json` |
 | `evals/report.py` | Pass rates overall and per tag, per-field accuracy, wrong answers counted by pattern, and the cases each edit broke |
+| `evals/review.py` | Simulates a human review rule on a finished run: which wrong answers a person would have seen, and which slipped through. No model calls |
 | `evals/agreement.py` | Checks a second person's blind labels against the expected answers |
 | `PREDICTIONS.md` | What I expected, written before the run |
 | `.env.example` | The one setting a paid run needs |
