@@ -212,7 +212,7 @@ For each prompt version the report lists every kind of wrong answer with its fre
 {"id": "t12", "tags": ["tone-mismatch"], "ticket": "Hello, hope you're well. Small thing, no rush at all: I got an email saying someone signed into my account from a device in a country I've never been to. Probably nothing? Thanks so much!", "expected": {"category": "account_access", "urgency": "high", "refund_requested": false, "invoice_id": null}}
 ```
 
-**A result row** (`runs/<name>/results.jsonl`) holds the job key, the case and prompt fingerprints, effort, SDK version, timestamp, the model that served the call, the tags, the status, `passed`, a true or false per field, the expected answer, the model's output, token counts (full-rate input, cache reads, cache writes, output, and reasoning where the vendor reports it), cost and latency.
+**A result row** (`runs/<name>/results.jsonl`) holds the job key, the case and prompt fingerprints, effort, SDK version, timestamp, the model that served the call, the tags, the status, `passed`, a true or false per field, the expected answer, the model's output, token counts (full-rate input, cache reads, cache writes, output, and the reasoning part of output), cost and latency.
 
 **The manifest** (`runs/<name>/manifest.json`) is rewritten at the end of every invocation. It holds the code commit and whether the folder had uncommitted changes, the model IDs requested and the ones that answered, effort, token limit, timeout and SDK version, the prices used for cost, totals across the run, and one entry per invocation with its arguments, start and finish times, call counts and cost.
 

@@ -53,7 +53,7 @@ class TriageResult:
     latency_s: float
     cache_read_tokens: int = 0
     cache_write_tokens: int = 0
-    reasoning_tokens: int | None = None  # reported by OpenAI only
+    reasoning_tokens: int | None = None  # thinking/reasoning tokens, a part of output_tokens
 
 
 def load_prompt(version: str) -> str:
@@ -116,6 +116,7 @@ async def triage_anthropic(
         latency_s=round(latency, 3),
         cache_read_tokens=usage.cache_read_input_tokens or 0,
         cache_write_tokens=usage.cache_creation_input_tokens or 0,
+        reasoning_tokens=usage.output_tokens_details.thinking_tokens if usage.output_tokens_details else None,
     )
 
 
