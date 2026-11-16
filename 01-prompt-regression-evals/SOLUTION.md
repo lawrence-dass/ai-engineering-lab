@@ -38,7 +38,7 @@ flowchart LR
     EXIT -- no --> OK[exit 0]
 ```
 
-One **job** is a single model call, identified by four values: model, prompt version, case and repetition number. A default full run is 2 models × 5 prompt versions × 40 cases × 3 repetitions, which is 1,200 jobs.
+One **job** is a single model call, identified by four values: model, prompt version, case and repetition number. A default full run is 4 models × 5 prompt versions × 40 cases × 3 repetitions, which is 2,400 jobs.
 
 ## 4. Components
 
@@ -49,7 +49,7 @@ One **job** is a single model call, identified by four values: model, prompt ver
 | Case loader | `evals/cases.py` | Loads the cases and rejects a malformed file before any call is made |
 | Prompts | `prompts/*.md` | `v1_baseline.md` and one file per edit. Each edit is the baseline with one change |
 | Output contract | `triage/schema.py` | The JSON Schema sent to the API, and the Pydantic model used to check the reply |
-| The feature | `triage/app.py` | `triage_ticket()`: the single model call a product would ship |
+| The feature | `triage/app.py` | `triage_ticket()`: the single model call a product would ship, with one implementation per provider |
 | Grader | `evals/grade.py` | Compares one output with one expected answer. No model calls |
 | Runner | `evals/run.py` | Schedules jobs, writes one row per finished job, logs failed calls separately, writes the run manifest |
 | Report | `evals/report.py` | Pass rates overall and per tag, per-field accuracy, wrong answers counted by pattern, cases that changed, and the gate |
@@ -75,6 +75,8 @@ The request carries a JSON Schema, so the API returns JSON of the right shape. T
 *Why:* the schema removes a whole class of failure (unparseable replies), which leaves the suite measuring one thing: whether the values are right. Validating again costs nothing and means a contract mismatch is recorded as `invalid`, not as a crash.
 
 *Turned down:* asking for JSON in the prompt and parsing free text. That mixes formatting failures with judgement failures in the same score.
+
+Both vendors support this. Anthropic takes the schema in `output_config.format`, OpenAI in the Responses API's `text.format` with `strict: true`. OpenAI's strict mode writes a nullable field as a type list, so `triage/schema.py` keeps a second copy of the schema that differs only in how `invoice_id` allows null. The Pydantic check on our side is the same for both.
 
 ### 5.3 Exact match on four fields, and all four must be right
 
@@ -129,13 +131,22 @@ Before starting, the runner reads `results.jsonl` and skips every job that alrea
 
 The request does not enable server-side fallback to another model.
 
-*Why:* a fallback would let a different model answer silently. The suite compares prompts on a named model, so the model has to stay fixed. The runner also checks the model named in each reply and treats a mismatch as an error.
+*Why:* a fallback would let a different model answer silently. The suite compares prompts on a named model, so the model has to stay fixed. The runner also checks the model named in each reply, for both vendors, and treats a mismatch as an error.
 
-### 5.10 Low effort, two models
+### 5.10 Four models, two vendors, low effort
 
-Both models run at `effort: low`. The suite runs on Claude Haiku 5.5 and Claude Opus 5.5.
+The suite runs on a cheap model and a strong model from each of two vendors:
 
-*Why:* triage is a short classification task and would run at high volume, where low effort is the realistic setting. Two models show whether an edit that is safe on one is safe on the other.
+| Tier | Anthropic | OpenAI |
+|---|---|---|
+| Cheap, high volume | Claude Haiku 5.5 | GPT-6 Luna |
+| Strong, a step below the flagship | Claude Opus 5.5 | GPT-6.1 Sol |
+
+All four run at `low` effort, the lowest level all four accept, and all four reason before answering.
+
+*Why:* triage is a short classification task and would run at high volume, where low effort is the realistic setting. Two tiers show whether a stronger model resists an edit that breaks a cheap one. Two vendors show whether a result is about the prompt or about one vendor's models: Haiku and Opus may fail in similar ways, and a second vendor answers that objection. Each tier is matched by position in its vendor's lineup. Prices differ: Luna and Haiku cost the same, Sol costs half what Opus does.
+
+*Turned down:* the two flagships, Claude Fable 5.2 and GPT-6 Astra. They roughly double the cost of the run, and a company would not route support tickets through a flagship model. Neither vendor's top model is tested, and the results say nothing about them. Also turned down: a local model, whose JSON output is less reliable and would mix format failures into the results.
 
 ### 5.11 An interval next to every pass rate
 
@@ -201,7 +212,7 @@ For each prompt version the report lists every kind of wrong answer with its fre
 {"id": "t12", "tags": ["tone-mismatch"], "ticket": "Hello, hope you're well. Small thing, no rush at all: I got an email saying someone signed into my account from a device in a country I've never been to. Probably nothing? Thanks so much!", "expected": {"category": "account_access", "urgency": "high", "refund_requested": false, "invoice_id": null}}
 ```
 
-**A result row** (`runs/<name>/results.jsonl`) holds the job key, the case and prompt fingerprints, effort, SDK version, timestamp, the model that served the call, the tags, the status, `passed`, a true or false per field, the expected answer, the model's output, token counts, cost and latency.
+**A result row** (`runs/<name>/results.jsonl`) holds the job key, the case and prompt fingerprints, effort, SDK version, timestamp, the model that served the call, the tags, the status, `passed`, a true or false per field, the expected answer, the model's output, token counts (full-rate input, cache reads, cache writes, output, and reasoning where the vendor reports it), cost and latency.
 
 **The manifest** (`runs/<name>/manifest.json`) is rewritten at the end of every invocation. It holds the code commit and whether the folder had uncommitted changes, the model IDs requested and the ones that answered, effort, token limit, timeout and SDK version, the prices used for cost, totals across the run, and one entry per invocation with its arguments, start and finish times, call counts and cost.
 
@@ -251,13 +262,22 @@ The tests use a stand-in for the model. Nothing here has been run against a real
 
 ## 10. Testing
 
-27 tests in `tests/test_evals.py`, none of which call a model. They cover case validation, grading, the broken/flaky/fixed rule, resuming a run, the errors file, the report naming the right case, the per-tag and wrong-answer tables, label agreement, the run manifest, and each way the gate fails closed. The runner accepts the triage function as an argument, which is how the tests substitute a stand-in.
+30 tests in `tests/test_evals.py`, none of which call a model. They cover case validation, grading, the broken/flaky/fixed rule, resuming a run, the errors file, the report naming the right case, the per-tag and wrong-answer tables, label agreement, the run manifest, the OpenAI call (parsing, refusals, cut-off replies, cached tokens), the cost formula, and each way the gate fails closed. The runner accepts the triage function as an argument, which is how the tests substitute a stand-in.
 
 ## 11. Cost
 
-Prices used for cost tracking, in US dollars per million tokens: Claude Haiku 5.5 at 0.10 input and 0.50 output, Claude Opus 5.5 at 4.00 input and 20.00 output.
+Prices used for cost tracking, in US dollars per million tokens, checked against each vendor's pricing page on 2026-11-15:
 
-The cost of a full run has not been measured. A five-case pilot comes first, and its measured cost is checked against the 10 dollar limit in the problem statement before the full run.
+| Model | Input | Cache read | Cache write | Output |
+|---|---|---|---|---|
+| Claude Haiku 5.5 | 0.10 | 0.01 | 0.125 | 0.50 |
+| Claude Opus 5.5 | 4.00 | 0.20 | 5.00 | 20.00 |
+| GPT-6 Luna | 0.10 | 0.01 | 0.125 | 0.50 |
+| GPT-6.1 Sol | 2.00 | 0.10 | 2.50 | 10.00 |
+
+OpenAI caches long prompts automatically. Anthropic caches only when the request asks for it, which this harness does not do yet. Cached tokens are recorded and priced on every row either way.
+
+A ten-call pilot on the two Claude models on 2026-11-15 cost $0.0318: about $0.00016 per call on Haiku and $0.0062 on Opus. The cost of a full run has not been measured. Each new model gets a pilot first, and the measured cost is checked against the budget before the full run.
 
 ## 12. Open questions
 
@@ -293,4 +313,5 @@ What this experiment does that the reference project does not: it calls a live m
 | 2026-11-12 | Revised after reading the article 1 resources in full, which the first version was not based on. Added a fail-closed gate with tolerances (5.13) and fingerprints on every row (5.14). Added four known gaps and the table of what came from each resource. |
 | 2026-11-12 | Second revision after finishing the remaining resources. Added the per-tag breakdown (5.15), wrong-answer patterns (5.16) and the blind-label agreement check (5.17). |
 | 2026-11-14 | Added the run manifest (section 6) and the served model on every result row. |
+| 2026-11-15 | Added two OpenAI models (5.2, 5.10, section 11). Cache reads, cache writes and reasoning tokens are recorded on every row and priced separately. |
 | 2026-11-15 | Recorded the blind labelling result and the decision on open question 3 (section 9, section 12). |

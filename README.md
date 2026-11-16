@@ -6,7 +6,7 @@ Every folder stands alone: its own README, dependencies and run command. Nothing
 
 | # | Experiment | Question | Stack | Article |
 |---|---|---|---|---|
-| 01 | [prompt-regression-evals](01-prompt-regression-evals/) | How many test cases does a harmless-looking prompt edit break? | Python, Claude API | coming 24 Nov 2026 |
+| 01 | [prompt-regression-evals](01-prompt-regression-evals/) | How many test cases does a harmless-looking prompt edit break? | Python, Claude and OpenAI APIs | coming 24 Nov 2026 |
 
 ## Conventions
 

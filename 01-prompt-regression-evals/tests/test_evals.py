@@ -105,7 +105,7 @@ def stub_triage(wrong_on: set[tuple[str, str]]):
 
 def test_run_writes_one_row_per_job_and_resumes_without_duplicates(tmp_path):
     kwargs = dict(run_name="t", models=["haiku"], versions=["v1_baseline"], reps=2, concurrency=4,
-                  limit=3, runs_dir=tmp_path, triage_fn=stub_triage(set()), client=object())
+                  limit=3, runs_dir=tmp_path, triage_fn=stub_triage(set()), clients=object())
     first = asyncio.run(run(**kwargs))
     second = asyncio.run(run(**kwargs))
     rows = load_rows(tmp_path / "t")
@@ -119,7 +119,7 @@ def test_report_names_the_case_a_prompt_edit_broke(tmp_path):
     # "Keep it quick" only appears in the v2 prompt, so only v2 gets the wrong answer.
     triage_fn = stub_triage({("Keep it quick", first_ticket)})
     asyncio.run(run(run_name="t", models=["haiku"], versions=["v1_baseline", "v2_keep_it_quick"], reps=3,
-                    concurrency=4, limit=4, runs_dir=tmp_path, triage_fn=triage_fn, client=object()))
+                    concurrency=4, limit=4, runs_dir=tmp_path, triage_fn=triage_fn, clients=object()))
     report, failures = build_report(load_rows(tmp_path / "t"))
     assert failures == ["haiku v2_keep_it_quick: 1 broken (allowed 0)"]
     assert "**broken** `t01`: urgency: high (want low)" in report
@@ -130,7 +130,7 @@ def test_api_failures_go_to_the_errors_file_not_the_results(tmp_path):
         raise RuntimeError("boom")
 
     summary = asyncio.run(run(run_name="t", models=["haiku"], versions=["v1_baseline"], reps=1, concurrency=2,
-                              limit=2, runs_dir=tmp_path, triage_fn=failing, client=object()))
+                              limit=2, runs_dir=tmp_path, triage_fn=failing, clients=object()))
     assert summary["errors"] == 2
     assert not (tmp_path / "t" / "results.jsonl").exists()
     errors = [json.loads(line) for line in (tmp_path / "t" / "errors.jsonl").read_text().splitlines()]
@@ -141,7 +141,7 @@ def test_api_failures_go_to_the_errors_file_not_the_results(tmp_path):
 
 def run_stub(tmp_path, versions, limit=3, reps=1, **kwargs):
     return asyncio.run(run(run_name="t", models=["haiku"], versions=versions, reps=reps, concurrency=4,
-                           limit=limit, runs_dir=tmp_path, triage_fn=stub_triage(set()), client=object(), **kwargs))
+                           limit=limit, runs_dir=tmp_path, triage_fn=stub_triage(set()), clients=object(), **kwargs))
 
 
 def test_gate_fails_when_there_are_no_results(tmp_path):
@@ -203,7 +203,8 @@ def test_manifest_records_what_produced_the_run_and_keeps_a_history(tmp_path):
     assert {"commit", "dirty"} <= set(manifest["code"])
     assert manifest["models"]["haiku"]["requested"] == "claude-haiku-5-5"
     assert manifest["models"]["haiku"]["served"]
-    assert manifest["prices_usd_per_million_tokens"]["haiku"] == {"input": 0.10, "output": 0.50}
+    assert manifest["prices_usd_per_million_tokens"]["haiku"]["input"] == 0.10
+    assert manifest["providers"] == {"haiku": "anthropic"}
     assert manifest["settings"]["effort"] == "low"
     assert manifest["totals"]["result_rows"] == 4
     assert [i["ran"] for i in manifest["invocations"]] == [2, 2]
@@ -216,7 +217,7 @@ def test_report_breaks_results_down_by_kind_of_case_and_counts_wrong_answers(tmp
     first_ticket = load_cases()[0].ticket
     asyncio.run(run(run_name="t", models=["haiku"], versions=["v1_baseline", "v2_keep_it_quick"], reps=3,
                     concurrency=4, limit=12, runs_dir=tmp_path,
-                    triage_fn=stub_triage({("Keep it quick", first_ticket)}), client=object()))
+                    triage_fn=stub_triage({("Keep it quick", first_ticket)}), clients=object()))
     report, _ = build_report(load_rows(tmp_path / "t"))
     assert "| tag | cases | v1_baseline | v2_keep_it_quick |" in report
     assert "| easy | 9 | 100% | 89% |" in report
@@ -234,3 +235,65 @@ def test_label_agreement_reports_each_disagreement():
     assert result["agreement"]["urgency"] == 0.75
     assert result["agreement"]["category"] == 1.0
     assert result["disagreements"] == [(cases[0].id, "urgency", "high", "low")]
+
+
+# --- the OpenAI call, with a stand-in for the API ----------------------------
+
+from types import SimpleNamespace
+
+from evals.run import cost_usd
+from triage.app import triage_openai
+
+
+def fake_openai_response(*, text="", refusal=False, status="completed", reason=None, cached=0, written=0):
+    part = SimpleNamespace(type="refusal", refusal="no") if refusal else SimpleNamespace(type="output_text", text=text)
+    return SimpleNamespace(
+        output=[SimpleNamespace(type="reasoning"), SimpleNamespace(type="message", content=[part])],
+        output_text="" if refusal else text,
+        status=status,
+        incomplete_details=SimpleNamespace(reason=reason) if reason else None,
+        model="gpt-6-luna",
+        usage=SimpleNamespace(
+            input_tokens=1200,
+            input_tokens_details=SimpleNamespace(cached_tokens=cached, cache_write_tokens=written),
+            output_tokens=90,
+            output_tokens_details=SimpleNamespace(reasoning_tokens=20),
+        ),
+    )
+
+
+def fake_openai_client(response):
+    sent = {}
+
+    async def create(**kwargs):
+        sent.update(kwargs)
+        return response
+
+    return SimpleNamespace(responses=SimpleNamespace(create=create)), sent
+
+
+def call_openai(response):
+    client, sent = fake_openai_client(response)
+    result = asyncio.run(triage_openai(client, model="gpt-6-luna", system_prompt="rules", ticket="hi"))
+    return result, sent
+
+
+def test_openai_reply_is_parsed_and_cached_tokens_are_split_out():
+    reply = json.dumps({**EXPECTED, "summary": "Duplicate charge, refund wanted."})
+    result, sent = call_openai(fake_openai_response(text=reply, cached=1024, written=0))
+    assert result.status == "ok" and result.output.invoice_id == "INV-204817"
+    assert (result.input_tokens, result.cache_read_tokens, result.reasoning_tokens) == (176, 1024, 20)
+    assert sent["text"]["format"]["strict"] is True
+    assert sent["reasoning"] == {"effort": "low"} and sent["store"] is False
+
+
+def test_openai_refusal_and_cut_off_reply_are_labelled():
+    assert call_openai(fake_openai_response(refusal=True))[0].status == "refusal"
+    cut = call_openai(fake_openai_response(status="incomplete", reason="max_output_tokens"))[0]
+    assert cut.status == "truncated" and cut.stop_reason == "incomplete:max_output_tokens"
+
+
+def test_cost_prices_cache_reads_and_writes_separately():
+    assert cost_usd("opus", 1_000_000, 0) == 4.0
+    assert cost_usd("opus", 0, 0, cache_read=1_000_000) == 0.2
+    assert cost_usd("luna", 0, 1_000_000, cache_write=1_000_000) == 0.625

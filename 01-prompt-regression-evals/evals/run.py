@@ -25,25 +25,38 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import anthropic
+import openai
 
 from evals.cases import Case, load_cases
 from evals.grade import grade
-from triage.app import EFFORT, MAX_TOKENS, MODELS, PROMPTS_DIR, load_prompt, triage_ticket
+from triage.app import EFFORT, MAX_TOKENS, MODELS, PROMPTS_DIR, PROVIDERS, load_prompt, triage_ticket
 
 ROOT = Path(__file__).resolve().parent.parent
 RUNS_DIR = ROOT / "runs"
 CASE_TIMEOUT_S = 120
 
-# USD per million tokens (input, output), prompts under 100K tokens.
+# USD per million tokens, standard (non-batch) rates for short prompts, checked
+# against each vendor's pricing page on 2026-11-15. A cache write is billed at
+# 1.25 times the input rate on both vendors (Anthropic's 5-minute and OpenAI's
+# 30-minute retention).
 PRICES = {
-    "haiku": (0.10, 0.50),
-    "opus": (4.00, 20.00),
+    "haiku": {"input": 0.10, "cache_read": 0.01, "cache_write": 0.125, "output": 0.50},
+    "opus": {"input": 4.00, "cache_read": 0.20, "cache_write": 5.00, "output": 20.00},
+    "luna": {"input": 0.10, "cache_read": 0.01, "cache_write": 0.125, "output": 0.50},
+    "sol": {"input": 2.00, "cache_read": 0.10, "cache_write": 2.50, "output": 10.00},
 }
 
 
-def cost_usd(model: str, input_tokens: int, output_tokens: int) -> float:
-    price_in, price_out = PRICES[model]
-    return round((input_tokens * price_in + output_tokens * price_out) / 1_000_000, 6)
+def cost_usd(model: str, input_tokens: int, output_tokens: int, cache_read: int = 0, cache_write: int = 0) -> float:
+    """input_tokens is the part billed at the full rate. Cache reads and writes are priced separately."""
+    price = PRICES[model]
+    total = (
+        input_tokens * price["input"]
+        + cache_read * price["cache_read"]
+        + cache_write * price["cache_write"]
+        + output_tokens * price["output"]
+    )
+    return round(total / 1_000_000, 6)
 
 
 def job_key(row: dict) -> tuple:
@@ -122,10 +135,10 @@ def write_manifest(run_dir: Path, invocation: dict) -> None:
             "max_tokens": MAX_TOKENS,
             "call_timeout_s": CASE_TIMEOUT_S,
             "sdk_version": anthropic.__version__,
+            "openai_sdk_version": openai.__version__,
         },
-        "prices_usd_per_million_tokens": {
-            name: {"input": PRICES[name][0], "output": PRICES[name][1]} for name in used
-        },
+        "providers": {name: PROVIDERS[name] for name in used},
+        "prices_usd_per_million_tokens": {name: PRICES[name] for name in used},
         "totals": {
             "result_rows": len(results),
             "error_rows": len(errors),
@@ -144,20 +157,37 @@ class StaleRun(Exception):
     """A case or prompt was edited after this run started, so old and new rows would not be comparable."""
 
 
+AUTH_ERRORS = (anthropic.AuthenticationError, openai.AuthenticationError)
+
+
 def classify_error(exc: Exception) -> str:
     if isinstance(exc, asyncio.TimeoutError):
         return "timeout"
-    if isinstance(exc, anthropic.RateLimitError):
+    if isinstance(exc, (anthropic.RateLimitError, openai.RateLimitError)):
         return "rate_limit"
-    if isinstance(exc, anthropic.APIStatusError):
+    if isinstance(exc, (anthropic.APIStatusError, openai.APIStatusError)):
         return f"api_{exc.status_code}"
-    if isinstance(exc, anthropic.APIConnectionError):
+    if isinstance(exc, (anthropic.APIConnectionError, openai.APIConnectionError)):
         return "connection"
     return type(exc).__name__
 
 
+def make_clients(models: list[str]) -> dict:
+    """One client per provider in use, so a run on Claude models alone needs no OpenAI key."""
+    providers = {PROVIDERS[name] for name in models}
+    clients = {}
+    if "anthropic" in providers:
+        clients["anthropic"] = anthropic.AsyncAnthropic(max_retries=4)
+    if "openai" in providers:
+        try:
+            clients["openai"] = openai.AsyncOpenAI(max_retries=4)
+        except openai.OpenAIError as exc:  # raised at construction when no key is set
+            raise MissingCredentials("OPENAI_API_KEY") from exc
+    return clients
+
+
 async def run_job(
-    *, client, triage_fn, semaphore, run_dir: Path, model: str, version: str, prompt: str, case: Case, rep: int
+    *, clients, triage_fn, semaphore, run_dir: Path, model: str, version: str, prompt: str, case: Case, rep: int
 ) -> dict:
     """Runs one job and returns {"cost": float, "error": bool}."""
     base = {"model": model, "version": version, "case_id": case.id, "rep": rep}
@@ -165,25 +195,32 @@ async def run_job(
         "case_sha": case_fingerprint(case),
         "prompt_sha": fingerprint(prompt),
         "effort": EFFORT,
-        "sdk_version": anthropic.__version__,
+        "sdk_version": anthropic.__version__ if PROVIDERS[model] == "anthropic" else openai.__version__,
         "ran_at": now(),
     }
     async with semaphore:
         try:
             result = await asyncio.wait_for(
-                triage_fn(client, model=MODELS[model], system_prompt=prompt, ticket=case.ticket),
+                triage_fn(clients, model=MODELS[model], system_prompt=prompt, ticket=case.ticket),
                 timeout=CASE_TIMEOUT_S,
             )
-        except anthropic.AuthenticationError:
+        except AUTH_ERRORS:
             raise
         except Exception as exc:  # recorded and retried on the next run
-            if "authentication method" in str(exc):  # the SDK found no credentials at all
-                raise MissingCredentials from exc
+            if "authentication method" in str(exc):  # the Anthropic SDK found no credentials at all
+                raise MissingCredentials("ANTHROPIC_API_KEY") from exc
             append(run_dir / "errors.jsonl", {**base, "error": classify_error(exc), "detail": str(exc)[:300]})
             return {"cost": 0.0, "error": True}
 
-    cost = cost_usd(model, result.input_tokens, result.output_tokens)
-    usage = {"input_tokens": result.input_tokens, "output_tokens": result.output_tokens, "cost_usd": cost}
+    cost = cost_usd(model, result.input_tokens, result.output_tokens, result.cache_read_tokens, result.cache_write_tokens)
+    usage = {
+        "input_tokens": result.input_tokens,
+        "cache_read_tokens": result.cache_read_tokens,
+        "cache_write_tokens": result.cache_write_tokens,
+        "output_tokens": result.output_tokens,
+        "reasoning_tokens": result.reasoning_tokens,
+        "cost_usd": cost,
+    }
 
     # A cut-off reply, or a reply from a different model than the one asked for, is not a fair test.
     wrong_model = not result.served_model.startswith(MODELS[model])
@@ -225,7 +262,7 @@ async def run(
     limit: int | None = None,
     runs_dir: Path = RUNS_DIR,
     triage_fn=triage_ticket,
-    client=None,
+    clients=None,
 ) -> dict:
     run_dir = runs_dir / run_name
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -233,7 +270,7 @@ async def run(
     code = code_state()  # read before any output is written
     cases = load_cases()[:limit]
     done = load_done(run_dir / "results.jsonl")
-    client = client or anthropic.AsyncAnthropic(max_retries=4)
+    clients = clients if clients is not None else make_clients(models)
     semaphore = asyncio.Semaphore(concurrency)
 
     jobs = []
@@ -252,7 +289,7 @@ async def run(
                         continue
                     jobs.append(
                         run_job(
-                            client=client, triage_fn=triage_fn, semaphore=semaphore, run_dir=run_dir,
+                            clients=clients, triage_fn=triage_fn, semaphore=semaphore, run_dir=run_dir,
                             model=model, version=version, prompt=prompt, case=case, rep=rep,
                         )
                     )
@@ -294,8 +331,10 @@ def main() -> None:
             run(run_name=args.run, models=args.models, versions=args.versions, reps=args.reps,
                 concurrency=args.concurrency, limit=args.limit)
         )
-    except (anthropic.AuthenticationError, MissingCredentials):
-        raise SystemExit("No valid API key. Set ANTHROPIC_API_KEY and run again.")
+    except MissingCredentials as exc:
+        raise SystemExit(f"No API key found. Set {exc} and run again.")
+    except AUTH_ERRORS as exc:
+        raise SystemExit(f"An API key was rejected ({type(exc).__module__.split('.')[0]}). Check it and run again.")
     except StaleRun as exc:
         raise SystemExit(str(exc))
 

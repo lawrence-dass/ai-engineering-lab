@@ -2,7 +2,7 @@
 
 A small eval suite that catches regressions when a prompt changes.
 
-The feature under test is one model call that triages a customer support message into JSON: category, urgency, whether a refund was requested, and the invoice number. The suite runs 40 hand-labelled tickets through it, repeats each one, and compares every edited prompt against the baseline.
+The feature under test is one model call that triages a customer support message into JSON: category, urgency, whether a refund was requested, and the invoice number. The suite runs 40 hand-labelled tickets through it, repeats each one, and compares every edited prompt against the baseline. It runs on four models: a cheap one and a strong one (a step below the flagship) from each of two vendors, Claude Haiku 5.5 and Claude Opus 5.5 from Anthropic, GPT-6 Luna and GPT-6.1 Sol from OpenAI.
 
 The problem it addresses is set out in [PROBLEM.md](PROBLEM.md). The design is in [SOLUTION.md](SOLUTION.md).
 
@@ -30,18 +30,19 @@ uv run pytest
 
 ### Paid: runs against the models
 
-These call the Claude API and cost money. Set a key first, either with `export ANTHROPIC_API_KEY=...` or by copying `.env.example` to `.env` and adding `--env-file .env` after `uv run`.
+These call the Claude and OpenAI APIs and cost money. Set `ANTHROPIC_API_KEY` for the Claude models and `OPENAI_API_KEY` for the OpenAI ones, either with `export` or by copying `.env.example` to `.env` and adding `--env-file .env` after `uv run`. A run only needs the key for the models it names.
 
-Start with the pilot. It makes 5 calls on the cheaper model and prints what they cost.
+Start with the pilot. It makes 5 calls per model on the baseline prompt and prints what they cost.
 
 ```bash
-uv run python -m evals.run --run pilot --models haiku --versions v1_baseline --limit 5 --reps 1
+uv run python -m evals.run --run pilot --models haiku luna --versions v1_baseline --limit 5 --reps 1
 ```
 
-The full run is 1,200 calls: 2 models, 5 prompt versions, 40 cases, 3 repetitions.
+The full run is 2,400 calls: 4 models, 5 prompt versions, 40 cases, 3 repetitions. It can be run in two stages into the same run folder, the cheap models first.
 
 ```bash
-uv run python -m evals.run --run main
+uv run python -m evals.run --run main --models haiku luna   # 1,200 calls, cheap models
+uv run python -m evals.run --run main --models opus sol     # 1,200 calls, strong models
 ```
 
 A rerun of the same command skips finished calls and retries failed ones.
@@ -74,7 +75,7 @@ Pilot runs are ignored by git. The run behind the article is committed, and will
 | `SOLUTION.md` | How the suite works, each design decision and what was turned down |
 | `prompts/v1_baseline.md` | The system prompt. Each other file in `prompts/` is the baseline with one edit |
 | `triage/schema.py` | The output contract: a JSON Schema sent to the API and a Pydantic model for checking the reply |
-| `triage/app.py` | The feature: one call to the model, returns a `Triage` record |
+| `triage/app.py` | The feature: one call to the model, returns a `Triage` record. One implementation per provider, same inputs and same result type |
 | `cases/tickets.jsonl` | 40 tickets with expected answers. `CASES.md` is the readable view |
 | `LABELING_POLICY.md` | The rules every expected answer follows |
 | `evals/grade.py` | Exact-match grading of four fields. A case passes only if all four are right |

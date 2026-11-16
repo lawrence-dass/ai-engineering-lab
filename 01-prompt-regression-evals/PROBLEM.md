@@ -78,7 +78,7 @@ Each part has to be dealt with before a solution can be trusted.
 
 - Detecting, before release, which tickets a prompt edit classifies differently from the current prompt
 - The four routing fields
-- Two models, to see whether an edit behaves the same on both
+- Four models from two vendors, a cheap one and a strong one from each, to see whether an edit behaves the same across model sizes and vendors
 - A pass or fail signal that can block a change
 
 **Out of scope**
@@ -132,4 +132,5 @@ A solution is good enough when:
 |---|---|
 | 2026-11-12 | First version. Written on the same day as the first build of the harness, before any run against a model. |
 | 2026-11-12 | Approved by the owner. Open questions carried into SOLUTION.md with the defaults in use. |
+| 2026-11-15 | Scope widened from two Claude models to four models from two vendors (Anthropic and OpenAI), so a result cannot be put down to one vendor's models. Decided by the owner before any full run. |
 | 2026-11-15 | Open question 3 decided after the blind labelling check: a reported wrong charge is not a refund request. The strict urgency rule was kept after the same check. |

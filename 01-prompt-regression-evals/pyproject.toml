@@ -5,6 +5,7 @@ description = "A small eval suite that catches regressions when a prompt changes
 requires-python = ">=3.11"
 dependencies = [
     "anthropic>=1.0",
+    "openai>=3.51.0",
     "pydantic>=2.7",
 ]
 

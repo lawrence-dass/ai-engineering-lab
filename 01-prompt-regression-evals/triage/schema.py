@@ -41,3 +41,10 @@ TRIAGE_JSON_SCHEMA: dict = {
     "required": ["category", "urgency", "refund_requested", "invoice_id", "summary"],
     "additionalProperties": False,
 }
+
+# The same contract in the form OpenAI's strict mode documents: a nullable field is
+# written as a type list rather than anyOf. Every other part is identical.
+TRIAGE_JSON_SCHEMA_OPENAI: dict = {
+    **TRIAGE_JSON_SCHEMA,
+    "properties": {**TRIAGE_JSON_SCHEMA["properties"], "invoice_id": {"type": ["string", "null"]}},
+}
