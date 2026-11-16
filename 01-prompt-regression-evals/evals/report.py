@@ -8,6 +8,11 @@ repeated. A case is only called BROKEN when it passed every repetition on the
 baseline and failed most of them on the new version. Anything in between is
 reported as flaky, not as a regression.
 
+Urgency gets its own rule. A ticket rated less urgent than it is waits in the
+general queue when it should page someone, which is the costliest mistake this
+feature can make, so any case whose urgency an edit lowers fails the gate on its
+own, whatever --max-broken allows.
+
 The gate fails closed. No results, no baseline, a case with no answer on the new
 version, or cases edited between versions all fail it, because a decision made
 on missing evidence is not the same as a decision made on zero failures.
@@ -24,6 +29,7 @@ from evals.grade import GRADED_FIELDS
 from evals.run import RUNS_DIR
 
 BASELINE = "v1_baseline"
+URGENCY_RANK = {"low": 0, "medium": 1, "high": 2}
 
 
 def load_rows(run_dir: Path) -> list[dict]:
@@ -61,11 +67,21 @@ def classify(baseline: float, candidate: float) -> str:
     return "flaky"
 
 
+def split_pass_rate(rows: list[dict], split: str) -> float | None:
+    fractions = pass_fractions([row for row in rows if row.get("split", "visible") == split])
+    return sum(fractions.values()) / len(fractions) if fractions else None
+
+
 def summarise(rows: list[dict]) -> dict:
     fractions = pass_fractions(rows)
     values = list(fractions.values())
     low, high = bootstrap_ci(values)
+    correct_calls = sum(r["passed"] for r in rows)
     return {
+        "visible_pass_rate": split_pass_rate(rows, "visible"),
+        "heldout_pass_rate": split_pass_rate(rows, "heldout"),
+        "cost_per_call": sum(r["cost_usd"] for r in rows) / len(rows),
+        "cost_per_correct": sum(r["cost_usd"] for r in rows) / correct_calls if correct_calls else None,
         "cases": len(values),
         "calls": len(rows),
         "pass_rate": sum(values) / len(values),
@@ -89,6 +105,34 @@ def compare(baseline: dict, candidate: dict) -> dict[str, list[str]]:
         if label != "same":
             moved[label].append(case_id)
     return moved
+
+
+def urgency_downgrades(baseline_rows: list[dict], candidate_rows: list[dict]) -> list[str]:
+    """Cases whose urgency was right on every baseline call and rated lower than expected on most candidate calls."""
+    def by_case(rows):
+        grouped = defaultdict(list)
+        for row in rows:
+            grouped[row["case_id"]].append(row)
+        return grouped
+
+    base, cand = by_case(baseline_rows), by_case(candidate_rows)
+    lowered = []
+    for case_id, calls in base.items():
+        if not all(row["fields"]["urgency"] for row in calls) or case_id not in cand:
+            continue
+        expected = URGENCY_RANK[calls[0]["expected"]["urgency"]]
+        lower = [r for r in cand[case_id] if r["output"] and URGENCY_RANK[r["output"]["urgency"]] < expected]
+        if len(lower) > len(cand[case_id]) / 2:
+            lowered.append(case_id)
+    return sorted(lowered)
+
+
+def money(value: float | None) -> str:
+    return f"${value:.5f}" if value is not None else "n/a"
+
+
+def share(value: float | None) -> str:
+    return f"{value:.1%}" if value is not None else "n/a"
 
 
 def wrong_fields(rows: list[dict], case_id: str) -> str:
@@ -141,10 +185,20 @@ def failure_patterns(rows: list[dict]) -> list[str]:
     return [f"- {pattern} ({calls[pattern]} calls, {len(cases[pattern])} cases)" for pattern in ordered]
 
 
-def build_report(rows: list[dict], *, max_broken: int = 0, min_pass_rate: float = 0.0) -> tuple[str, list[str]]:
+def build_report(
+    rows: list[dict],
+    *,
+    max_broken: int = 0,
+    min_pass_rate: float = 0.0,
+    max_urgency_downgrades: int = 0,
+    max_cost_per_call: float | None = None,
+    baseline: str = BASELINE,
+) -> tuple[str, list[str]]:
     """Returns (markdown, reasons the gate fails). An empty list of reasons means the gate passes."""
-    if not 0.0 <= min_pass_rate <= 1.0 or max_broken < 0:
-        raise ValueError("min_pass_rate must be between 0 and 1, and max_broken must not be negative")
+    if not 0.0 <= min_pass_rate <= 1.0 or max_broken < 0 or max_urgency_downgrades < 0:
+        raise ValueError("min_pass_rate must be between 0 and 1, and the allowed counts must not be negative")
+    if max_cost_per_call is not None and max_cost_per_call <= 0:
+        raise ValueError("max_cost_per_call must be positive")
 
     grouped: dict[str, dict[str, list[dict]]] = defaultdict(lambda: defaultdict(list))
     for row in rows:
@@ -159,16 +213,20 @@ def build_report(rows: list[dict], *, max_broken: int = 0, min_pass_rate: float 
         summaries = {version: summarise(version_rows) for version, version_rows in sorted(versions.items())}
         lines += [f"## {model}", ""]
         lines += [
-            "| version | pass rate | 95% interval | category | urgency | refund | invoice | cost | s/call |",
-            "|---|---|---|---|---|---|---|---|---|",
+            "| version | pass rate | 95% interval | visible | held-out | category | urgency | refund | invoice "
+            "| cost | $/call | $/correct | s/call |",
+            "|---|---|---|---|---|---|---|---|---|---|---|---|---|",
         ]
         for version, s in summaries.items():
             f = s["fields"]
             lines.append(
                 f"| {version} | {s['pass_rate']:.1%} | {s['ci'][0]:.1%} to {s['ci'][1]:.1%} "
+                f"| {share(s['visible_pass_rate'])} | {share(s['heldout_pass_rate'])} "
                 f"| {f['category']:.1%} | {f['urgency']:.1%} | {f['refund_requested']:.1%} | {f['invoice_id']:.1%} "
-                f"| ${s['cost_usd']:.4f} | {s['latency_s']:.1f} |"
+                f"| ${s['cost_usd']:.4f} | {money(s['cost_per_call'])} | {money(s['cost_per_correct'])} | {s['latency_s']:.1f} |"
             )
+            if max_cost_per_call is not None and s["cost_per_call"] > max_cost_per_call:
+                failures.append(f"{model} {version}: ${s['cost_per_call']:.5f} per call is above ${max_cost_per_call:.5f}")
         lines.append("")
         lines += tag_table(versions)
         for version in sorted(versions):
@@ -176,16 +234,22 @@ def build_report(rows: list[dict], *, max_broken: int = 0, min_pass_rate: float 
             if patterns:
                 lines += [f"Wrong answers on {version}:", ""] + patterns + [""]
 
-        if BASELINE not in summaries:
-            lines += [f"No {BASELINE} rows for this model, so nothing to compare against.", ""]
-            failures.append(f"{model}: no {BASELINE} results")
+        if baseline not in summaries:
+            lines += [f"No {baseline} rows for this model, so nothing to compare against.", ""]
+            failures.append(f"{model}: no {baseline} results")
             continue
 
         for version, s in summaries.items():
-            if version == BASELINE:
+            if version == baseline:
                 continue
-            moved = compare(summaries[BASELINE], s)
-            edited = edited_cases(versions[BASELINE], versions[version])
+            moved = compare(summaries[baseline], s)
+            edited = edited_cases(versions[baseline], versions[version])
+            lowered = urgency_downgrades(versions[baseline], versions[version])
+            if len(lowered) > max_urgency_downgrades:
+                failures.append(
+                    f"{model} {version}: urgency lowered on {len(lowered)} cases ({', '.join(lowered)}), "
+                    f"allowed {max_urgency_downgrades}"
+                )
             if len(moved["broken"]) > max_broken:
                 failures.append(f"{model} {version}: {len(moved['broken'])} broken (allowed {max_broken})")
             if moved["missing"]:
@@ -194,12 +258,13 @@ def build_report(rows: list[dict], *, max_broken: int = 0, min_pass_rate: float 
                 failures.append(f"{model} {version}: cases edited since the baseline ran: {', '.join(edited)}")
             if s["pass_rate"] < min_pass_rate:
                 failures.append(f"{model} {version}: pass rate {s['pass_rate']:.1%} is below {min_pass_rate:.1%}")
-            delta = s["pass_rate"] - summaries[BASELINE]["pass_rate"]
+            delta = s["pass_rate"] - summaries[baseline]["pass_rate"]
             lines += [
-                f"### {version} vs {BASELINE}",
+                f"### {version} vs {baseline}",
                 "",
                 f"Pass rate {delta:+.1%}. Broken: {len(moved['broken'])}. "
-                f"Fixed: {len(moved['fixed'])}. Flaky: {len(moved['flaky'])}. Missing: {len(moved['missing'])}.",
+                f"Fixed: {len(moved['fixed'])}. Flaky: {len(moved['flaky'])}. Missing: {len(moved['missing'])}. "
+                f"Urgency lowered: {len(lowered)}.",
                 "",
             ]
             for label in ("broken", "fixed", "flaky", "missing"):
@@ -218,10 +283,18 @@ def main() -> None:
     parser.add_argument("--gate", action="store_true", help="exit 1 if the gate fails")
     parser.add_argument("--max-broken", type=int, default=0, help="broken cases allowed per prompt version")
     parser.add_argument("--min-pass-rate", type=float, default=0.0, help="lowest pass rate allowed, 0 to 1")
+    parser.add_argument("--max-urgency-downgrades", type=int, default=0,
+                        help="cases an edit may rate less urgent than they are (default 0)")
+    parser.add_argument("--max-cost-per-call", type=float, default=None, help="highest average cost per call, in USD")
+    parser.add_argument("--baseline", default=BASELINE, help="prompt version the others are compared against")
     args = parser.parse_args()
 
     run_dir = RUNS_DIR / args.run
-    report, failures = build_report(load_rows(run_dir), max_broken=args.max_broken, min_pass_rate=args.min_pass_rate)
+    report, failures = build_report(
+        load_rows(run_dir), max_broken=args.max_broken, min_pass_rate=args.min_pass_rate,
+        max_urgency_downgrades=args.max_urgency_downgrades, max_cost_per_call=args.max_cost_per_call,
+        baseline=args.baseline,
+    )
     (run_dir / "report.md").write_text(report)
     print(report)
 

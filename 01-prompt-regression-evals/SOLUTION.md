@@ -13,7 +13,7 @@ This document explains how the solution works and why it is built this way. Resu
 
 ## 1. Summary
 
-Run a fixed set of labelled tickets through the real triage code, once for the current prompt and once for each edited prompt, several times each. Grade every answer field by field. Report which tickets changed, and fail the check if any ticket that used to pass now fails, or if the evidence is incomplete.
+Run a fixed set of labelled tickets through the real triage code, once for the current prompt and once for each edited prompt, several times each. Part of the set is held out: written by a second author and never read while the prompts are edited. Grade every answer field by field. Report which tickets changed, and fail the check if any ticket that used to pass now fails, if an edit makes any ticket less urgent than it is, or if the evidence is incomplete. Run the same check in CI on every pull request that changes a prompt.
 
 ## 2. Goals and non-goals
 
@@ -25,35 +25,39 @@ Run a fixed set of labelled tickets through the real triage code, once for the c
 
 ```mermaid
 flowchart LR
-    C[cases/tickets.jsonl<br/>40 labelled tickets] --> R
+    C[cases/tickets.jsonl + heldout.jsonl<br/>40 visible + 10 held-out] --> R
     P[prompts/*.md<br/>baseline + edits] --> R
-    R[evals/run.py<br/>model x prompt x case x repetition] --> A[triage/app.py<br/>one model call]
-    A --> G[evals/grade.py<br/>exact match per field]
+    R[evals/run.py<br/>model x prompt x case x repetition] --> A[triage/app.py<br/>one model call, cached prompt]
+    A --> RV[triage/review.py<br/>needs a person?]
+    RV --> G[evals/grade.py<br/>exact match per field]
     G --> RES[(runs/NAME/results.jsonl)]
     R -. failed calls .-> ERR[(runs/NAME/errors.jsonl)]
     RES --> REP[evals/report.py<br/>compare to baseline]
     REP --> MD[report.md]
-    REP --> EXIT{any case broken?}
+    REP --> EXIT{case broken, urgency lowered,<br/>or cost over limit?}
     EXIT -- yes, or evidence missing --> F[exit 1]
     EXIT -- no --> OK[exit 0]
 ```
 
-One **job** is a single model call, identified by four values: model, prompt version, case and repetition number. A default full run is 4 models × 5 prompt versions × 40 cases × 3 repetitions, which is 2,400 jobs.
+One **job** is a single model call, identified by four values: model, prompt version, case and repetition number. A default full run is 4 models × 6 prompt versions × 50 cases × 3 repetitions, which is 3,600 jobs.
 
 ## 4. Components
 
 | Component | File | Responsibility |
 |---|---|---|
 | Labelling policy | `LABELING_POLICY.md` | The written rules that define a correct answer |
-| Test cases | `cases/tickets.jsonl` | One JSON line per ticket: id, tags, text, expected values |
+| Test cases | `cases/tickets.jsonl`, `cases/heldout.jsonl` | One JSON line per ticket: id, tags, text, expected values. The held-out file has a second author and is not read while editing prompts |
+| Case importer | `evals/import_cases.py` | Turns a spreadsheet of cases into JSON Lines, checking every row first |
 | Case loader | `evals/cases.py` | Loads the cases and rejects a malformed file before any call is made |
-| Prompts | `prompts/*.md` | `v1_baseline.md` and one file per edit. Each edit is the baseline with one change |
+| Prompts | `prompts/*.md` | `v1_baseline.md`, four single-change edits and one bundled edit |
 | Output contract | `triage/schema.py` | The JSON Schema sent to the API, and the Pydantic model used to check the reply |
-| The feature | `triage/app.py` | `triage_ticket()`: the single model call a product would ship, with one implementation per provider |
+| The feature | `triage/app.py` | `triage_ticket()`: the single model call a product would ship, with one implementation per provider and the system prompt cached |
+| Review rule | `triage/review.py` | Business rules that decide whether a person checks an answer, with the reason |
 | Grader | `evals/grade.py` | Compares one output with one expected answer. No model calls |
 | Runner | `evals/run.py` | Schedules jobs, writes one row per finished job, logs failed calls separately, writes the run manifest |
 | Report | `evals/report.py` | Pass rates overall and per tag, per-field accuracy, wrong answers counted by pattern, cases that changed, and the gate |
-| Review simulation | `evals/review.py` | Applies a review rule to a finished run and counts the wrong answers it catches and misses. No model calls |
+| Review measurement | `evals/review.py` | How many wrong answers the shipped rule caught, and a simulation of adding agreement across three calls. No model calls |
+| CI planner | `evals/ci.py` | Picks which prompt versions a pull request's check runs |
 | Agreement check | `evals/agreement.py` | Compares a second person's blind labels with the expected answers |
 | Case viewer | `evals/render_cases.py` | Generates `CASES.md` so the test set can be reviewed without reading JSON |
 
@@ -205,15 +209,87 @@ For each prompt version the report lists every kind of wrong answer with its fre
 
 *Source:* the human annotation chapter of the same study guide.
 
-### 5.18 A review rule, simulated after the run
+### 5.18 The review decision is part of the feature, made by code
 
-`evals/review.py` takes each ticket's repeated calls and decides what a production system would do with them. The answer is the majority of the calls, field by field. The ticket goes to a person when the calls disagree on a graded field, when a reply was unusable, or when the answer is `account_access`, which covers logins and possible security problems. The expected answer stands in for a reviewer who always corrects the ticket.
+`triage/review.py` decides whether a person checks each answer before it is acted on. Today it sends a ticket to review when the reply was unusable, or when the answer is `account_access`, which covers logins and possible security problems. Every result carries `needs_review` and the reasons.
 
-*Why:* in production, code decides from a confidence signal and business rules whether a person checks an answer. That decision belongs in code, not in the model's output, so a threshold can change without a prompt change. The repeated calls the suite already makes give a free confidence signal: agreement. The simulation shows how many wrong answers that signal catches, and how many get past it because the model was consistently wrong.
+*Why:* whether a human looks is a business decision. Kept in code, a rule can change without a prompt change, it can differ per field, business rules can sit beside it, and every decision records why it was made.
 
-*Turned down:* asking the model for a confidence score. It changes the prompt and the output schema, which is itself a prompt edit and would make the run incomparable with the predictions. Self-reported scores also tend to be overconfident.
+*Turned down:* asking the model for a confidence score or a needs-review flag. It changes the prompt and the output schema, which is itself a prompt edit, and self-reported confidence tends to be overconfident.
 
-*Limits:* three calls per ticket triple the cost in production. The account_access rule is one example rule, not a tuned policy. Forty tickets can show the method but cannot set a threshold.
+`evals/review.py` measures how many wrong answers the rule caught. It also simulates a stronger signal: three calls per ticket, with review whenever they disagree.
+
+*Limits:* the account_access rule is one example rule, not a tuned policy. Three calls per ticket would triple the production cost. Fifty tickets can show the method but cannot set a threshold.
+
+### 5.19 The baseline is written the way a production prompt is
+
+`v1_baseline.md` has labelled sections:
+- the role, including what each field is used for;
+- how to treat the input, with an injection defence that also covers text claiming to come from staff or a system;
+- the field definitions;
+- the decision rules;
+- five worked examples.
+
+The examples are new tickets, none of them taken from the test set.
+
+*Why:* definitions alone leave gaps on the hard edges, and production classifier prompts show the model how those go. An example that matches a test case would make that case a test of copying, so examples and test cases are kept apart.
+
+*Turned down:* the first baseline, used for the run kept in `runs/round1/`. It had the same definitions and rules but no sections and no examples.
+
+### 5.20 Single-change edits, and one bundled edit
+
+`v2` to `v5` each change one thing, so a break can be traced to its cause:
+
+| Edit | The change |
+|---|---|
+| `v2` | An instruction to keep it quick |
+| `v3` | One more worked example, a double charge, as added after a bug report |
+| `v4` | A request to give upset customers attention |
+| `v5` | The urgency definitions shortened for readability |
+
+`v6_bundled_pr` makes three plausible changes at once, as a real pull request often does:
+- a shorter refund rule;
+- a vaguer multi-issue rule;
+- "if unsure about urgency, choose medium".
+
+*Why:* single changes show cause, and the bundle shows how much harder a regression is to trace when several changes arrive together.
+
+`v3`'s added example is close to test case t06. That is deliberate. Adding the failing ticket as an example is a common fix, and it can make that one case pass for the wrong reason.
+
+### 5.21 A held-out set from a second author
+
+`cases/heldout.jsonl` holds 10 tickets written by the owner from `LABELING_POLICY.md` alone, without reading the prompts. Prompt changes are made without reading it, and the report gives its pass rate in a column of its own.
+
+*Why:* the prompt, the edits and the 40 visible tickets have one author, and a prompt can be tuned to the cases its author can see. A second author and a set that stays unread while editing are the resources' answer to both.
+
+*Turned down:* moving 10 of the existing tickets into a held-out file. They would still have the prompt's author.
+
+### 5.22 The system prompt is cached
+
+The Claude call marks the system prompt with `cache_control`, and OpenAI caches automatically once a prompt reaches 1,024 tokens. Every row records cache reads and writes, and cost prices them separately.
+
+*Why:* the same instructions start every call, and caching them is standard practice in production. Caching changes cost and speed, never the answer.
+
+### 5.23 Urgency gets its own gate rule, and cost has a limit
+
+Any case whose urgency an edit lowers fails the gate, whatever `--max-broken` allows (`--max-urgency-downgrades`, default 0). The report shows cost per call and cost per correct ticket, and `--max-cost-per-call` can fail the gate on cost.
+
+*Why:* a ticket rated less urgent than it is waits when it should page someone. The eval-gated CI case study gates each quality axis on its own, because one combined score hides the axis that matters most. This answers open question 4.
+
+Cost per correct ticket is the useful unit, because list prices per token cannot be compared across vendors that count tokens differently.
+
+### 5.24 The gate runs in CI on prompt changes
+
+The `prompt-gate` job runs on every pull request:
+1. `evals/ci.py` lists the prompt files the pull request changed.
+2. The job runs those versions and the baseline on Haiku and Luna.
+3. It applies the gate. A failure blocks the merge.
+
+If the production prompt itself changed, the new text is compared with the copy on the base branch. The report goes into the job summary.
+
+*Why:* a gate only protects the product if it runs automatically, before the merge. The cheap models keep it at about $0.15 a run, which makes running it on every pull request reasonable.
+
+*Limits:* the job needs both API keys as repository secrets, so pull requests from forks cannot run it. It checks two of the four models; the strong models are run by hand before a release.
 
 ## 6. Data formats
 
@@ -223,7 +299,7 @@ For each prompt version the report lists every kind of wrong answer with its fre
 {"id": "t12", "tags": ["tone-mismatch"], "ticket": "Hello, hope you're well. Small thing, no rush at all: I got an email saying someone signed into my account from a device in a country I've never been to. Probably nothing? Thanks so much!", "expected": {"category": "account_access", "urgency": "high", "refund_requested": false, "invoice_id": null}}
 ```
 
-**A result row** (`runs/<name>/results.jsonl`) holds the job key, the case and prompt fingerprints, effort, SDK version, timestamp, the model that served the call, the tags, the status, `passed`, a true or false per field, the expected answer, the model's output, token counts (full-rate input, cache reads, cache writes, output, and the reasoning part of output), cost and latency.
+**A result row** (`runs/<name>/results.jsonl`) holds the job key, the case and prompt fingerprints, effort, SDK version, timestamp, the model that served the call, the review decision and its reasons, the tags, the split (visible or held-out), the status, `passed`, a true or false per field, the expected answer, the model's output, token counts (full-rate input, cache reads, cache writes, output, and the reasoning part of output), cost and latency.
 
 **The manifest** (`runs/<name>/manifest.json`) is rewritten at the end of every invocation. It holds the code commit and whether the folder had uncommitted changes, the model IDs requested and the ones that answered, effort, token limit, timeout and SDK version, the prices used for cost, totals across the run, and one entry per invocation with its arguments, start and finish times, call counts and cost.
 
@@ -236,17 +312,17 @@ The numbers match [PROBLEM.md, section 5](PROBLEM.md#5-parts-of-the-problem).
 | # | Part of the problem | Handled by | Status |
 |---|---|---|---|
 | 1 | No written definition of correct | `LABELING_POLICY.md`. Every expected answer must follow it | Handled |
-| 2 | No fixed set of examples | 40 tagged cases, including the hard kinds | Handled |
+| 2 | No fixed set of examples | 40 tagged visible cases including the hard kinds, plus 10 held-out cases (5.21) | Handled |
 | 3 | Valid output hides wrong output | Exact-match grading of values (5.3) | Handled |
 | 4 | Edits have distant effects | Every edit is run against every case, not only related ones | Handled |
 | 5 | Same input, different answers | Three repetitions and the broken/flaky rule (5.5, 5.6) | Handled. Number of repetitions unproven |
-| 6 | Behaviour depends on the model | Two models, reported separately (5.10) | Handled for two models |
+| 6 | Behaviour depends on the model | Four models, two vendors, reported separately (5.10) | Handled for four models |
 | 7 | Failed calls are not wrong answers | Separate errors file (5.7) | Handled |
 | 8 | Cheap enough to run every time | Concurrent calls, resumable runs, cost recorded per call | Not yet measured |
 | 9 | A small test set limits detection | Interval beside each pass rate (5.11) | Shown, not solved |
-| 10 | Nobody owns the decision to ship | `--gate` with explicit tolerances, failing closed (5.13) | Partly. See section 9 |
-| 11 | A test set goes stale | Fingerprints catch edits within a run (5.14). Nothing rotates or refreshes cases | Mostly not handled |
-| 12 | Fields do not matter equally | Per-field columns in the report | Partly. The gate treats fields equally |
+| 10 | Nobody owns the decision to ship | `--gate` with explicit tolerances, failing closed (5.13), run in CI on every prompt change (5.24) | Handled |
+| 11 | A test set goes stale | Fingerprints catch edits within a run (5.14). A spreadsheet importer makes adding cases easy. Nothing rotates or refreshes cases | Partly |
+| 12 | Fields do not matter equally | Per-field columns in the report, and a separate gate rule for lowered urgency (5.23) | Handled for urgency |
 
 ## 8. Success criteria
 
@@ -255,25 +331,25 @@ The numbers match [PROBLEM.md, section 5](PROBLEM.md#5-parts-of-the-problem).
 | 1 | Names every changed ticket, with field and value | Met | `test_report_names_the_case_a_prompt_edit_broke` |
 | 2 | Separates broken from inconsistent | Met | `test_classify` |
 | 3 | Restartable without loss or double-counting | Met | `test_run_writes_one_row_per_job_and_resumes_without_duplicates` |
-| 4 | Runs in CI and fails when a ticket breaks | Partly | `--gate` works and fails closed (six gate tests). CI runs the harness tests only |
-| 5 | Adding a case is one line in a data file | Met | `cases/tickets.jsonl`, checked on load by `evals/cases.py` |
+| 4 | Runs in CI and fails when a ticket breaks | Met, not yet run on GitHub | `prompt-gate` job (5.24), `test_ci_plan_compares_a_changed_production_prompt_with_the_base_branch_copy` |
+| 5 | Adding a case is one line in a data file | Met | `cases/tickets.jsonl`, or a spreadsheet row through `evals/import_cases.py` |
 | 6 | Cost and duration recorded | Partly | Recorded per call. No full run yet |
 
-The tests use a stand-in for the model. Nothing here has been run against a real model yet.
+The tests use a stand-in for the model. A first run on the first prompts is kept in `runs/round1/`.
 
 ## 9. Known gaps
 
-- **The gate does not run in CI.** A real run needs an API key and costs money, so the CI workflow runs only the harness tests. Wiring the gate into CI means storing a key as a repository secret and deciding which changes trigger a paid run.
+- **The CI gate has not run on GitHub yet.** The repository has not been pushed. It needs the two API keys stored as repository secrets.
 - **Nothing keeps the test set current.** There is no process for adding cases from real failures or retiring old ones.
-- **The gate does not separate fields.** One broken case of any kind fails it. The eval-gated CI case study in the AI System Design Guide gates each quality axis on its own and warns that a single combined score hides regressions on the axis that matters most. Applied here, that means a separate rule for `urgency`. This is open question 4.
+- **Only urgency has its own gate rule.** The other fields are covered by the broken-case rule.
 - **40 cases is below what the resources recommend for a pass rate.** The evaluation lesson in ai-engineering-from-scratch says 50 cases cannot detect a 5-point change and recommends 200 or more for release decisions. This suite is built to find which individual cases changed, which works at 40. Its pass rates should be read as rough.
-- **No held-out cases.** Every case is visible to whoever edits the prompt, so a prompt can be tuned to this set. The resources recommend a held-out set the prompt author never sees.
+- **The held-out set is small.** Ten cases from one second author. It checks the prompt author's blind spots, but cannot give a pass rate of its own with any precision.
 - **No cases from real traffic.** The resources describe three sources for a test set: curated cases, adversarial cases and production samples. This set has the first two.
 - **The labels have been checked by one second person, once.** The blind check (5.17) on 2026-11-15 gave 80% agreement on category, 68% on urgency, 88% on refund and 95% on invoice. Every urgency disagreement rated higher than the policy. The owner kept the strict urgency rule. The round 1 file is kept unedited in `labels/blind_round1.*`; later corrections are not blind.
 
 ## 10. Testing
 
-33 tests in `tests/test_evals.py`, none of which call a model. They cover case validation, grading, the broken/flaky/fixed rule, resuming a run, the errors file, the report naming the right case, the per-tag and wrong-answer tables, label agreement, the run manifest, the OpenAI call (parsing, refusals, cut-off replies, cached tokens), the cost formula, the review simulation, and each way the gate fails closed. The runner accepts the triage function as an argument, which is how the tests substitute a stand-in.
+41 tests in `tests/test_evals.py`, none of which call a model. They cover case validation, grading, the broken/flaky/fixed rule, resuming a run, the errors file, the report naming the right case, the per-tag and wrong-answer tables, label agreement, the run manifest, the OpenAI call (parsing, refusals, cut-off replies, cached tokens), the cost formula, the review rule in the feature and its measurement, prompt caching on the Claude call, held-out loading, the spreadsheet importer, the urgency gate rule, the cost limit, the CI plan, and each way the gate fails closed. The runner accepts the triage function as an argument, which is how the tests substitute a stand-in.
 
 ## 11. Cost
 
@@ -286,7 +362,7 @@ Prices used for cost tracking, in US dollars per million tokens, checked against
 | GPT-6 Luna | 0.10 | 0.01 | 0.125 | 0.50 |
 | GPT-6.1 Sol | 2.00 | 0.10 | 2.50 | 10.00 |
 
-OpenAI caches long prompts automatically. Anthropic caches only when the request asks for it, which this harness does not do yet. Cached tokens are recorded and priced on every row either way.
+OpenAI caches prompts of 1,024 tokens or more automatically. Anthropic caches when the request asks for it, which the feature now does (5.22). Cached tokens are recorded and priced on every row.
 
 A ten-call pilot on the two Claude models on 2026-11-15 cost $0.0318: about $0.00016 per call on Haiku and $0.0062 on Opus. The cost of a full run has not been measured. Each new model gets a pilot first, and the measured cost is checked against the budget before the full run.
 
@@ -299,7 +375,7 @@ Carried over from [PROBLEM.md, section 10](PROBLEM.md#10-open-questions). The de
 | 1 | How many repetitions are enough? | 3 |
 | 2 | Does one broken case block a change? | Yes. Now a setting (`--max-broken`), default 0 |
 | 3 | Is reporting a wrong charge a refund request? | No. Decided by the owner on 2026-11-15 |
-| 4 | Should fields carry different weights in the gate? | No |
+| 4 | Should fields carry different weights in the gate? | Urgency set too low fails the gate on its own (5.23) |
 
 ## 13. What came from the resources
 
@@ -324,6 +400,7 @@ What this experiment does that the reference project does not: it calls a live m
 | 2026-11-12 | Revised after reading the article 1 resources in full, which the first version was not based on. Added a fail-closed gate with tolerances (5.13) and fingerprints on every row (5.14). Added four known gaps and the table of what came from each resource. |
 | 2026-11-12 | Second revision after finishing the remaining resources. Added the per-tag breakdown (5.15), wrong-answer patterns (5.16) and the blind-label agreement check (5.17). |
 | 2026-11-14 | Added the run manifest (section 6) and the served model on every result row. |
+| 2026-11-16 | Rebuilt to production practice: a sectioned baseline with worked examples (5.19), a bundled edit (5.20), a held-out set (5.21), prompt caching (5.22), the review decision in the feature (5.18), an urgency gate rule and cost limit (5.23), and the gate in CI (5.24). The first run is kept in `runs/round1/`. |
 | 2026-11-16 | Added the review simulation (5.18). |
 | 2026-11-15 | Added two OpenAI models (5.2, 5.10, section 11). Cache reads, cache writes and reasoning tokens are recorded on every row and priced separately. |
 | 2026-11-15 | Recorded the blind labelling result and the decision on open question 3 (section 9, section 12). |

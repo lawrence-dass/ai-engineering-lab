@@ -11,7 +11,11 @@ from pathlib import Path
 
 from triage.schema import CATEGORIES, URGENCIES
 
-CASES_PATH = Path(__file__).resolve().parent.parent / "cases" / "tickets.jsonl"
+CASES_DIR = Path(__file__).resolve().parent.parent / "cases"
+CASES_PATH = CASES_DIR / "tickets.jsonl"
+# Written by a second author from the labelling policy alone. Nobody editing the
+# prompts reads this file, and the report scores it separately.
+HELDOUT_PATH = CASES_DIR / "heldout.jsonl"
 INVOICE_RE = re.compile(r"^INV-\d{6}$")
 EXPECTED_KEYS = {"category", "urgency", "refund_requested", "invoice_id"}
 
@@ -22,6 +26,7 @@ class Case:
     tags: tuple[str, ...]
     ticket: str
     expected: dict
+    split: str = "visible"  # "visible" or "heldout"
 
 
 def validate(raw: dict, line_no: int) -> None:
@@ -47,7 +52,7 @@ def validate(raw: dict, line_no: int) -> None:
         raise ValueError(f"{where}: invoice_id must look like INV-204817 or be null")
 
 
-def load_cases(path: Path = CASES_PATH) -> list[Case]:
+def load_cases(path: Path = CASES_PATH, split: str = "visible") -> list[Case]:
     cases: list[Case] = []
     seen: set[str] = set()
     for line_no, line in enumerate(path.read_text().splitlines(), start=1):
@@ -58,5 +63,17 @@ def load_cases(path: Path = CASES_PATH) -> list[Case]:
         if raw["id"] in seen:
             raise ValueError(f"line {line_no}: duplicate id {raw['id']!r}")
         seen.add(raw["id"])
-        cases.append(Case(raw["id"], tuple(raw["tags"]), raw["ticket"], raw["expected"]))
+        cases.append(Case(raw["id"], tuple(raw["tags"]), raw["ticket"], raw["expected"], split))
+    return cases
+
+
+def load_all_cases(visible: Path = CASES_PATH, heldout: Path = HELDOUT_PATH) -> list[Case]:
+    """The visible cases, then the held-out ones if the file exists. Ids must be unique across both."""
+    cases = load_cases(visible)
+    if heldout.exists():
+        cases += load_cases(heldout, split="heldout")
+    ids = [case.id for case in cases]
+    duplicates = sorted({case_id for case_id in ids if ids.count(case_id) > 1})
+    if duplicates:
+        raise ValueError(f"case ids used in both files: {', '.join(duplicates)}")
     return cases

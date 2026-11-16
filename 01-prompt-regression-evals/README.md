@@ -1,14 +1,22 @@
 # 01 · prompt-regression-evals
 
-A small eval suite that catches regressions when a prompt changes.
+An eval suite and CI gate that catch regressions when a prompt changes.
 
-The feature under test is one model call that triages a customer support message into JSON: category, urgency, whether a refund was requested, and the invoice number. The suite runs 40 hand-labelled tickets through it, repeats each one, and compares every edited prompt against the baseline. It runs on four models: a cheap one and a strong one (a step below the flagship) from each of two vendors, Claude Haiku 5.5 and Claude Opus 5.5 from Anthropic, GPT-6 Luna and GPT-6.1 Sol from OpenAI.
+The feature under test is one model call that triages a customer support message into JSON: category, urgency, whether a refund was requested, and the invoice number. Code then decides whether a person should check the answer.
+
+The suite runs 50 hand-labelled tickets through the feature and repeats each one three times:
+- 40 visible tickets;
+- 10 held-out tickets, written by a second author and never read while the prompts are edited.
+
+It compares every edited prompt with the baseline on four models: a cheap one and a strong one (a step below the flagship) from each of two vendors. Those are Claude Haiku 5.5 and Claude Opus 5.5 from Anthropic, and GPT-6 Luna and GPT-6.1 Sol from OpenAI.
+
+On a pull request that changes a prompt, the same check runs in GitHub Actions and blocks the merge if a ticket broke.
 
 The problem it addresses is set out in [PROBLEM.md](PROBLEM.md). The design is in [SOLUTION.md](SOLUTION.md).
 
 ## Result
 
-Pending the first full run. This section will hold the main finding and a link to the run it came from.
+Pending the final run. This section will hold the main finding and a link to the run it came from.
 
 ## Run it
 
@@ -38,35 +46,63 @@ Start with the pilot. It makes 5 calls per model on the baseline prompt and prin
 uv run python -m evals.run --run pilot --models haiku luna --versions v1_baseline --limit 5 --reps 1
 ```
 
-The full run is 2,400 calls: 4 models, 5 prompt versions, 40 cases, 3 repetitions. It can be run in two stages into the same run folder, the cheap models first.
+The full run is 3,600 calls: 4 models, 6 prompt versions, 50 cases, 3 repetitions. Run it in two stages into the same folder, the cheap models first.
 
 ```bash
-uv run python -m evals.run --run main --models haiku luna   # 1,200 calls, cheap models
-uv run python -m evals.run --run main --models opus sol     # 1,200 calls, strong models
+uv run python -m evals.run --run main --models haiku luna   # 1,800 calls, cheap models
+uv run python -m evals.run --run main --models opus sol     # 1,800 calls, strong models
 ```
 
 A rerun of the same command skips finished calls and retries failed ones.
 
-The report reads the saved rows and makes no model calls.
+### Reports, from the saved rows, with no model calls
 
 ```bash
-uv run python -m evals.report --run main
-uv run python -m evals.report --run main --gate   # exits 1 if a case broke or evidence is missing
-uv run python -m evals.review --run main          # what a human review rule would have caught
+uv run python -m evals.report --run main           # pass rates, cost per correct ticket, what each edit broke
+uv run python -m evals.report --run main --gate    # exits 1 if the gate fails
+uv run python -m evals.review --run main           # which wrong answers a person would have seen
 ```
+
+The gate fails when any of these holds:
+- a case broke (`--max-broken`, default 0);
+- an edit rated any case less urgent than it is (`--max-urgency-downgrades`, default 0, checked separately from broken cases);
+- the average cost per call is above a limit (`--max-cost-per-call`, off by default);
+- the evidence is incomplete.
+
+### Adding test cases without code
+
+Fill in a spreadsheet with the columns `id, tags, ticket, category, urgency, refund_requested, invoice_id`, then import it:
+
+```bash
+uv run python -m evals.import_cases cases/heldout.csv cases/heldout.jsonl
+```
+
+Every row is checked against the same rules the suite uses, and nothing is written unless all rows pass.
+
+### In CI
+
+`.github/workflows/01-prompt-regression-evals.yml` has two jobs:
+
+| Job | When | What |
+|---|---|---|
+| `test` | Every push and pull request | The free harness tests |
+| `prompt-gate` | Pull requests | Finds the prompt files the pull request changed (`evals/ci.py`) and runs them with the baseline on Haiku and Luna, about $0.15 a run. Then applies the gate. If the production prompt itself changed, its new text is compared with the copy on the base branch |
+
+`prompt-gate` needs `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` as repository secrets.
 
 ## Evidence
 
-Every run writes four files to `runs/<name>/`:
+Every run writes these files to `runs/<name>/`:
 
 | File | What it holds |
 |---|---|
-| `results.jsonl` | One graded row per finished call |
+| `results.jsonl` | One graded row per finished call, including the review decision and cache tokens |
 | `errors.jsonl` | Calls that failed before giving a gradable answer |
 | `report.md` | The comparison against the baseline, written by `evals.report` |
+| `review.md` | How many wrong answers the review rule caught, written by `evals.review` |
 | `manifest.json` | The code commit, the model IDs requested and the ones that answered, run settings, the prices used for cost, and a history of every invocation |
 
-Pilot runs are ignored by git. The run behind the article is committed, and will be linked here.
+`runs/round1/` is the first run, on the first version of the prompts, kept as a record. Pilot runs are ignored by git. The run behind the article will be linked here.
 
 ## How it works
 
@@ -74,18 +110,24 @@ Pilot runs are ignored by git. The run behind the article is committed, and will
 |---|---|
 | `PROBLEM.md` | The problem this experiment addresses, its parts, scope and success criteria |
 | `SOLUTION.md` | How the suite works, each design decision and what was turned down |
-| `prompts/v1_baseline.md` | The system prompt. Each other file in `prompts/` is the baseline with one edit |
+| `prompts/v1_baseline.md` | The production prompt: labelled sections, field definitions, rules and worked examples |
+| `prompts/v2` to `v5` | The baseline with one edit each |
+| `prompts/v6_bundled_pr.md` | The baseline with three edits at once, as a real pull request often has |
 | `triage/schema.py` | The output contract: a JSON Schema sent to the API and a Pydantic model for checking the reply |
-| `triage/app.py` | The feature: one call to the model, returns a `Triage` record. One implementation per provider, same inputs and same result type |
-| `cases/tickets.jsonl` | 40 tickets with expected answers. `CASES.md` is the readable view |
+| `triage/app.py` | The feature: one model call, with prompt caching. One implementation per provider, same inputs and same result type |
+| `triage/review.py` | The business rules that decide whether a person checks an answer, and why |
+| `cases/tickets.jsonl` | 40 visible tickets with expected answers. `CASES.md` is the readable view |
+| `cases/heldout.jsonl` | 10 held-out tickets, written by a second author. Not read while editing prompts |
 | `LABELING_POLICY.md` | The rules every expected answer follows |
 | `evals/grade.py` | Exact-match grading of four fields. A case passes only if all four are right |
 | `evals/run.py` | Runs model × prompt version × case × repetition, writes one row per call, resumable. Writes `manifest.json` |
-| `evals/report.py` | Pass rates overall and per tag, per-field accuracy, wrong answers counted by pattern, and the cases each edit broke |
-| `evals/review.py` | Simulates a human review rule on a finished run: which wrong answers a person would have seen, and which slipped through. No model calls |
+| `evals/report.py` | Pass rates (overall, visible, held-out), per-field accuracy, cost per correct ticket, wrong answers by pattern, what each edit broke, and the gate |
+| `evals/review.py` | The review rule as shipped, and a simulation of adding agreement across three calls |
+| `evals/ci.py` | Picks which prompt versions a pull request's check runs |
+| `evals/import_cases.py` | Imports test cases from a spreadsheet, checking every row |
 | `evals/agreement.py` | Checks a second person's blind labels against the expected answers |
-| `PREDICTIONS.md` | What I expected, written before the run |
-| `.env.example` | The one setting a paid run needs |
+| `PREDICTIONS.md` | What I expected, written before each run |
+| `.env.example` | The settings a paid run needs |
 
 ## Design
 
@@ -93,9 +135,11 @@ The design, the alternatives that were turned down, and how each part of the pro
 
 ## Limits
 
-- 40 cases is a small set. One case is 2.5 points of pass rate. The suite is built to show which cases changed. Its pass rates are rough.
+- 50 cases is a small set. One case is 2 points of pass rate. The suite is built to show which cases changed. Its pass rates are rough.
 - The tickets are written by hand, not sampled from a real support queue.
 - The expected answers follow one written policy. A different policy would give different scores.
+- The prompt, the edits and the 40 visible tickets have one author. The 10 held-out tickets are the check on that.
+- Neither vendor's flagship model is tested.
 
 ## Credits
 

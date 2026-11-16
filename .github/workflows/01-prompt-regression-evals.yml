@@ -24,5 +24,48 @@ jobs:
           python-version: "3.12"
       - run: pip install uv
       - run: uv sync --locked
-      # Harness tests only. They use a stand-in for the model, so no API key and no cost.
+      # Harness tests. They use a stand-in for the model, so no API key and no cost.
       - run: uv run pytest
+
+  # The regression gate itself. On a pull request that changes a prompt, run the
+  # changed versions and the baseline on the two cheap models and block the merge
+  # if a case broke, urgency was lowered, or the evidence is incomplete.
+  # Needs ANTHROPIC_API_KEY and OPENAI_API_KEY as repository secrets. About $0.15 a run.
+  prompt-gate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    concurrency:
+      group: prompt-gate-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    defaults:
+      run:
+        working-directory: 01-prompt-regression-evals
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install uv
+      - run: uv sync --locked
+      - id: plan
+        run: uv run python -m evals.ci --base "origin/${{ github.base_ref }}" | tee -a "$GITHUB_OUTPUT"
+      - if: steps.plan.outputs.VERSIONS != ''
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: uv run python -m evals.run --run ci --models haiku luna --versions ${{ steps.plan.outputs.VERSIONS }}
+      - if: steps.plan.outputs.VERSIONS != ''
+        run: uv run python -m evals.report --run ci --baseline "${{ steps.plan.outputs.BASELINE }}" --gate
+      - if: always() && steps.plan.outputs.VERSIONS != ''
+        run: |
+          cat runs/ci/report.md >> "$GITHUB_STEP_SUMMARY" || true
+          uv run python -m evals.review --run ci >> "$GITHUB_STEP_SUMMARY" || true
+      - if: always() && steps.plan.outputs.VERSIONS != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: prompt-gate-run
+          path: 01-prompt-regression-evals/runs/ci/

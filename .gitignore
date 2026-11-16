@@ -13,3 +13,7 @@ __pycache__/
 
 # Pilot runs are for checking cost and plumbing. Published runs are committed.
 **/runs/pilot*/
+
+# CI writes the base branch copy of the production prompt and its run here
+01-prompt-regression-evals/prompts/main_baseline.md
+01-prompt-regression-evals/runs/ci/

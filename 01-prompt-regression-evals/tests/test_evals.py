@@ -6,7 +6,7 @@ import json
 import pytest
 
 from evals.agreement import compare as compare_labels
-from evals.cases import load_cases, validate
+from evals.cases import load_all_cases, load_cases, validate
 from evals.grade import grade
 from evals.report import build_report, classify, load_rows
 from evals.run import StaleRun, run
@@ -89,7 +89,7 @@ def test_classify(baseline, candidate, label):
 
 def stub_triage(wrong_on: set[tuple[str, str]]):
     """Returns the expected answer, except urgency is flipped for (version marker, ticket) pairs in wrong_on."""
-    expected_by_ticket = {case.ticket: case.expected for case in load_cases()}
+    expected_by_ticket = {case.ticket: case.expected for case in load_all_cases()}
 
     async def triage_fn(client, *, model, system_prompt, ticket):
         answer = dict(expected_by_ticket[ticket])
@@ -331,3 +331,103 @@ def test_simulation_counts_caught_and_slipped_wrong_answers():
     m = simulate(data)[("haiku", "v1_baseline")]
     assert (m["auto_right"], m["auto_wrong"], m["wrong_caught"], m["reviewed"]) == (1, 1, 1, 1)
     assert m["slipped"] == ["b"]
+
+
+# --- the review rule inside the feature, and prompt caching -----------------
+
+from evals.ci import MAIN_COPY, plan
+from evals.import_cases import import_cases
+from evals.report import urgency_downgrades
+from triage.app import triage_anthropic, triage_ticket
+from triage.review import review_decision
+
+
+def test_review_rule_flags_account_access_and_unusable_replies_only():
+    assert review_decision("ok", make_output()) == (False, [])
+    assert review_decision("ok", make_output(category="account_access")) == (True, ["rule:account_access"])
+    assert review_decision("invalid", None) == (True, ["unusable_reply:invalid"])
+
+
+def test_the_feature_attaches_the_review_decision_to_its_answer():
+    reply = json.dumps({**EXPECTED, "category": "account_access", "summary": "Locked out."})
+    client, _ = fake_openai_client(fake_openai_response(text=reply))
+    result = asyncio.run(triage_ticket({"openai": client}, model="gpt-6-luna", system_prompt="rules", ticket="hi"))
+    assert result.needs_review is True and result.review_reasons == ("rule:account_access",)
+
+
+def test_claude_call_marks_the_system_prompt_for_caching_and_reads_cache_tokens():
+    sent = {}
+
+    async def create(**kwargs):
+        sent.update(kwargs)
+        return SimpleNamespace(
+            content=[SimpleNamespace(type="text", text=json.dumps({**EXPECTED, "summary": "s"}))],
+            stop_reason="end_turn", model="claude-haiku-5-5",
+            usage=SimpleNamespace(input_tokens=50, output_tokens=70, cache_read_input_tokens=1400,
+                                  cache_creation_input_tokens=0, output_tokens_details=SimpleNamespace(thinking_tokens=3)),
+        )
+
+    client = SimpleNamespace(messages=SimpleNamespace(create=create))
+    result = asyncio.run(triage_anthropic(client, model="claude-haiku-5-5", system_prompt="rules", ticket="hi"))
+    assert sent["system"][0]["cache_control"] == {"type": "ephemeral"}
+    assert (result.cache_read_tokens, result.reasoning_tokens, result.status) == (1400, 3, "ok")
+
+
+# --- held-out cases and the spreadsheet importer ------------------------------
+
+def write_lines(path, rows):
+    path.write_text("".join(json.dumps(row) + "\n" for row in rows))
+    return path
+
+
+def test_heldout_cases_load_with_their_own_split_and_ids_must_not_clash(tmp_path):
+    row = {"id": "h01", "tags": ["easy"], "ticket": "hi", "expected": {**EXPECTED}}
+    visible = write_lines(tmp_path / "v.jsonl", [{**row, "id": "t01"}])
+    heldout = write_lines(tmp_path / "h.jsonl", [row])
+    cases = load_all_cases(visible, heldout)
+    assert [(c.id, c.split) for c in cases] == [("t01", "visible"), ("h01", "heldout")]
+    with pytest.raises(ValueError, match="both files"):
+        load_all_cases(visible, write_lines(tmp_path / "h2.jsonl", [{**row, "id": "t01"}]))
+
+
+def test_spreadsheet_import_checks_every_row_and_skips_empty_ones(tmp_path):
+    sheet = tmp_path / "cases.csv"
+    sheet.write_text(
+        "id,tags,ticket,category,urgency,refund_requested,invoice_id\n"
+        "h01,refund-trap,Refund the duplicate on inv-204817 please,Billing,High,TRUE,inv-204817\n"
+        "h02,,,,,,\n"
+        "h03,easy,Where is the export button?,how_to,urgent,FALSE,\n"
+    )
+    cases, problems = import_cases(sheet)
+    assert [c["id"] for c in cases] == ["h01"]
+    assert cases[0]["expected"]["category"] == "billing" and cases[0]["expected"]["refund_requested"] is True
+    assert len(problems) == 1 and "urgency" in problems[0]
+
+
+# --- the gate's urgency rule, cost limit and CI plan --------------------------
+
+def test_lowering_urgency_fails_the_gate_even_when_broken_cases_are_allowed(tmp_path):
+    high = next(case for case in load_cases() if case.expected["urgency"] == "high")
+    asyncio.run(run(run_name="t", models=["haiku"], versions=["v1_baseline", "v2_keep_it_quick"], reps=3,
+                    concurrency=4, limit=10, runs_dir=tmp_path, triage_fn=stub_triage({("Keep it quick", high.ticket)}),
+                    clients=object()))
+    rows = load_rows(tmp_path / "t")
+    base = [r for r in rows if r["version"] == "v1_baseline"]
+    cand = [r for r in rows if r["version"] == "v2_keep_it_quick"]
+    assert urgency_downgrades(base, cand) == [high.id]
+    _, failures = build_report(rows, max_broken=5)
+    assert any("urgency lowered" in reason for reason in failures)
+    assert not any("broken" in reason for reason in failures)
+
+
+def test_gate_can_cap_the_cost_per_call(tmp_path):
+    run_stub(tmp_path, ["v1_baseline", "v2_keep_it_quick"])
+    rows = load_rows(tmp_path / "t")
+    assert not build_report(rows)[1]
+    assert any("per call" in reason for reason in build_report(rows, max_cost_per_call=0.000001)[1])
+
+
+def test_ci_plan_compares_a_changed_production_prompt_with_the_base_branch_copy():
+    assert plan([]) == ("v1_baseline", [])
+    assert plan(["v3_add_example"]) == ("v1_baseline", ["v1_baseline", "v3_add_example"])
+    assert plan(["v1_baseline"]) == (MAIN_COPY, [MAIN_COPY, "v1_baseline"])

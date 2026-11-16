@@ -1,9 +1,15 @@
-"""Simulates a human review rule over a finished run. Makes no model calls.
+"""Measures how well the review rule catches wrong answers, over a finished run. No model calls.
 
     uv run python -m evals.review --run main
 
-In production, code decides per ticket whether a person should check the model's
-answer. This script asks what such a rule would have done on the saved results:
+Two rules are measured.
+
+1. As shipped. The feature makes one call per ticket, and triage/review.py decides
+   from business rules whether a person checks it. Every result row records that
+   decision, so this part reads it straight from the rows.
+
+2. With agreement, simulated. What the rule would catch if production made three
+   calls per ticket and also sent a ticket to review when the calls disagree:
 
 - The answer for a ticket is the majority of its repeated calls, field by field.
 - The ticket goes to review when the calls disagree on a graded field, when a
@@ -21,8 +27,7 @@ from pathlib import Path
 
 from evals.grade import GRADED_FIELDS
 from evals.run import RUNS_DIR
-
-ALWAYS_REVIEW_CATEGORIES = {"account_access"}  # logins and possible security problems
+from triage.review import ALWAYS_REVIEW_CATEGORIES
 
 
 def load_rows(run_dir: Path) -> list[dict]:
@@ -89,6 +94,24 @@ def simulate(rows: list[dict]) -> dict[tuple[str, str], dict]:
     return dict(results)
 
 
+def as_shipped(rows: list[dict]) -> dict[tuple[str, str], dict]:
+    """(model, version) -> what the single-call rule recorded on each row did with the wrong answers."""
+    results: dict[tuple[str, str], dict] = defaultdict(
+        lambda: {"calls": 0, "reviewed": 0, "wrong": 0, "wrong_caught": 0, "reasons": Counter()}
+    )
+    for row in rows:
+        if "needs_review" not in row:  # rows from before the rule was built into the feature
+            continue
+        m = results[(row["model"], row["version"])]
+        m["calls"] += 1
+        m["reviewed"] += row["needs_review"]
+        m["reasons"].update(row["review_reasons"])
+        if not row["passed"]:
+            m["wrong"] += 1
+            m["wrong_caught"] += row["needs_review"]
+    return dict(results)
+
+
 def pct(part: int, whole: int) -> str:
     return f"{part / whole:.0%}" if whole else "n/a"
 
@@ -96,10 +119,26 @@ def pct(part: int, whole: int) -> str:
 def build_review_report(rows: list[dict]) -> str:
     results = simulate(rows)
     if not results:
-        return "# Review simulation\n\nNo results.\n"
+        return "# Review\n\nNo results.\n"
 
-    lines = [
-        "# Review simulation",
+    lines = ["# Review", "", "## 1. The rule as shipped: one call per ticket, business rules only", ""]
+    shipped = as_shipped(rows)
+    if shipped:
+        lines += [
+            "| Model | Version | Calls | Sent to review | Wrong answers | Caught by review | Slipped through | Reasons |",
+            "|---|---|---|---|---|---|---|---|",
+        ]
+        for (model, version), m in sorted(shipped.items()):
+            reasons = ", ".join(f"{r} {n}" for r, n in m["reasons"].most_common()) or "none"
+            lines.append(
+                f"| {model} | {version} | {m['calls']} | {pct(m['reviewed'], m['calls'])} | {m['wrong']} | "
+                f"{m['wrong_caught']} | {m['wrong'] - m['wrong_caught']} | {reasons} |"
+            )
+    else:
+        lines.append("These rows predate the review rule in the feature.")
+    lines += [
+        "",
+        "## 2. Simulated: three calls per ticket, plus review when the calls disagree",
         "",
         "Answer = majority of the repeated calls. Review when the calls disagree on a graded field, "
         "a reply was unusable, or the answer is account_access. The expected answer stands in for the reviewer.",

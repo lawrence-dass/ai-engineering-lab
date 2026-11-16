@@ -27,9 +27,9 @@ from pathlib import Path
 import anthropic
 import openai
 
-from evals.cases import Case, load_cases
+from evals.cases import Case, load_all_cases
 from evals.grade import grade
-from triage.app import EFFORT, MAX_TOKENS, MODELS, PROMPTS_DIR, PROVIDERS, load_prompt, triage_ticket
+from triage.app import EFFORT, MAX_TOKENS, MODELS, PROMPT_CACHING, PROMPTS_DIR, PROVIDERS, load_prompt, triage_ticket
 
 ROOT = Path(__file__).resolve().parent.parent
 RUNS_DIR = ROOT / "runs"
@@ -134,6 +134,7 @@ def write_manifest(run_dir: Path, invocation: dict) -> None:
             "effort": EFFORT,
             "max_tokens": MAX_TOKENS,
             "call_timeout_s": CASE_TIMEOUT_S,
+            "prompt_caching": PROMPT_CACHING,
             "sdk_version": anthropic.__version__,
             "openai_sdk_version": openai.__version__,
         },
@@ -236,6 +237,7 @@ async def run_job(
             **base,
             **provenance,
             "tags": list(case.tags),
+            "split": case.split,
             "status": result.status,
             "passed": graded["passed"],
             "fields": graded["fields"],
@@ -245,6 +247,8 @@ async def run_job(
             "raw_text": None if result.output else result.raw_text,
             "stop_reason": result.stop_reason,
             "served_model": result.served_model,
+            "needs_review": result.needs_review,
+            "review_reasons": list(result.review_reasons),
             "latency_s": result.latency_s,
             **usage,
         },
@@ -268,7 +272,7 @@ async def run(
     run_dir.mkdir(parents=True, exist_ok=True)
     started_at = now()
     code = code_state()  # read before any output is written
-    cases = load_cases()[:limit]
+    cases = load_all_cases()[:limit]
     done = load_done(run_dir / "results.jsonl")
     clients = clients if clients is not None else make_clients(models)
     semaphore = asyncio.Semaphore(concurrency)
@@ -306,7 +310,7 @@ async def run(
         {
             "started_at": started_at, "finished_at": now(), **code,
             "models": models, "versions": versions, "reps": reps, "concurrency": concurrency,
-            "limit": limit, "cases": len(cases), **counts,
+            "limit": limit, "cases": len(cases), "heldout_cases": sum(c.split == "heldout" for c in cases), **counts,
         },
     )
     return {"run_dir": run_dir, **counts}

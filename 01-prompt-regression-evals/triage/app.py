@@ -18,6 +18,7 @@ import anthropic
 import openai
 from pydantic import ValidationError
 
+from triage.review import review_decision
 from triage.schema import TRIAGE_JSON_SCHEMA, TRIAGE_JSON_SCHEMA_OPENAI, Triage
 
 PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
@@ -40,6 +41,11 @@ PROVIDER_BY_MODEL_ID = {MODELS[name]: PROVIDERS[name] for name in MODELS}
 EFFORT = "low"
 MAX_TOKENS = 8000
 
+# The system prompt is the same on every call, so it is cached. Anthropic caches
+# only when asked; OpenAI caches automatically once a prompt reaches its minimum
+# length. Caching changes cost and speed, never the answer.
+PROMPT_CACHING = True
+
 
 @dataclass
 class TriageResult:
@@ -54,6 +60,8 @@ class TriageResult:
     cache_read_tokens: int = 0
     cache_write_tokens: int = 0
     reasoning_tokens: int | None = None  # thinking/reasoning tokens, a part of output_tokens
+    needs_review: bool = False  # decided by triage/review.py, not by the model
+    review_reasons: tuple[str, ...] = ()
 
 
 def load_prompt(version: str) -> str:
@@ -75,7 +83,10 @@ async def triage_ticket(clients: dict, *, model: str, system_prompt: str, ticket
     """Triages one ticket with the named model, using that model's provider."""
     provider = PROVIDER_BY_MODEL_ID[model]
     call = triage_anthropic if provider == "anthropic" else triage_openai
-    return await call(clients[provider], model=model, system_prompt=system_prompt, ticket=ticket)
+    result = await call(clients[provider], model=model, system_prompt=system_prompt, ticket=ticket)
+    result.needs_review, reasons = review_decision(result.status, result.output)
+    result.review_reasons = tuple(reasons)
+    return result
 
 
 async def triage_anthropic(
@@ -85,7 +96,9 @@ async def triage_anthropic(
     response = await client.messages.create(
         model=model,
         max_tokens=MAX_TOKENS,
-        system=system_prompt,
+        system=[
+            {"type": "text", "text": system_prompt, **({"cache_control": {"type": "ephemeral"}} if PROMPT_CACHING else {})}
+        ],
         messages=[{"role": "user", "content": build_user_message(ticket)}],
         output_config={
             "effort": EFFORT,
