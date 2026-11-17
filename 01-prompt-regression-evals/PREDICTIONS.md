@@ -6,13 +6,13 @@ Each round is written before its run and not edited afterwards.
 
 For each edit, how many of the 50 cases (40 visible, 10 held-out) do I expect it to break on each model? "Break" means the case passed every repetition on the baseline and failed most repetitions on the edited prompt.
 
-| Edit | What changed | Haiku 5.5 | Opus 5.5 | GPT-6 Luna | GPT-6.1 Sol |
-|---|---|---|---|---|---|
-| `v2_keep_it_quick` | One line at the end: go with the obvious reading, don't overanalyse | ? | ? | ? | ? |
-| `v3_add_example` | One more worked example: a double charge with an invoice ID | ? | ? | ? | ? |
-| `v4_feel_heard` | Two sentences near the top: upset customers should get the attention they deserve | ? | ? | ? | ? |
-| `v5_tidy_urgency` | The urgency definitions and the tone rule shortened for readability | ? | ? | ? | ? |
-| `v6_bundled_pr` | Three changes at once: a shorter refund rule, a vaguer multi-issue rule, "if unsure, choose medium" | ? | ? | ? | ? |
+| Edit               | What changed                                                                                        | Haiku 5.5 | Opus 5.5 | GPT-6 Luna | GPT-6.1 Sol |
+| ------------------ | --------------------------------------------------------------------------------------------------- | --------- | -------- | ---------- | ----------- |
+| `v2_keep_it_quick` | One line at the end: go with the obvious reading, don't overanalyse                                 | 2         | 1        | 1          | 0           |
+| `v3_add_example`   | One more worked example: a double charge with an invoice ID                                         | 0         | 0        | 1          | 0           |
+| `v4_feel_heard`    | Two sentences near the top: upset customers should get the attention they deserve                   | 3         | 2        | 2          | 1           |
+| `v5_tidy_urgency`  | The urgency definitions and the tone rule shortened for readability                                 | 2         | 1        | 2          | 1           |
+| `v6_bundled_pr`    | Three changes at once: a shorter refund rule, a vaguer multi-issue rule, "if unsure, choose medium" | 3         | 2        | 4          | 2           |
 
 Baseline pass rate I expect, out of 50: Haiku ?, Opus ?, Luna ?, Sol ?
 
