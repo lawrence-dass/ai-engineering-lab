@@ -25,6 +25,7 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
+from evals.cases import load_all_cases
 from evals.grade import GRADED_FIELDS
 from evals.run import RUNS_DIR
 
@@ -127,6 +128,28 @@ def urgency_downgrades(baseline_rows: list[dict], candidate_rows: list[dict]) ->
     return sorted(lowered)
 
 
+def incomplete(model: str, versions: dict[str, list[dict]], expected_cases: list[str] | None) -> list[str]:
+    """Reasons the evidence for a model is incomplete: cases with no rows, or fewer repetitions than the rest."""
+    reasons = []
+    counts_by_version = {}
+    for version, rows in sorted(versions.items()):
+        counts = defaultdict(int)
+        for row in rows:
+            counts[row["case_id"]] += 1
+        counts_by_version[version] = counts
+        if expected_cases is not None:
+            missing = sorted(set(expected_cases) - set(counts))
+            if missing:
+                reasons.append(f"{model} {version}: no results for {len(missing)} cases ({', '.join(missing[:5])}"
+                               f"{', ...' if len(missing) > 5 else ''})")
+    most = max((n for counts in counts_by_version.values() for n in counts.values()), default=0)
+    for version, counts in counts_by_version.items():
+        short = sorted(case_id for case_id, n in counts.items() if n < most)
+        if short:
+            reasons.append(f"{model} {version}: {len(short)} cases have fewer than {most} repetitions")
+    return reasons
+
+
 def money(value: float | None) -> str:
     return f"${value:.5f}" if value is not None else "n/a"
 
@@ -193,6 +216,7 @@ def build_report(
     max_urgency_downgrades: int = 0,
     max_cost_per_call: float | None = None,
     baseline: str = BASELINE,
+    expected_cases: list[str] | None = None,
 ) -> tuple[str, list[str]]:
     """Returns (markdown, reasons the gate fails). An empty list of reasons means the gate passes."""
     if not 0.0 <= min_pass_rate <= 1.0 or max_broken < 0 or max_urgency_downgrades < 0:
@@ -211,6 +235,7 @@ def build_report(
 
     for model, versions in sorted(grouped.items()):
         summaries = {version: summarise(version_rows) for version, version_rows in sorted(versions.items())}
+        failures += incomplete(model, versions, expected_cases)
         lines += [f"## {model}", ""]
         lines += [
             "| version | pass rate | 95% interval | visible | held-out | category | urgency | refund | invoice "
@@ -294,6 +319,7 @@ def main() -> None:
         load_rows(run_dir), max_broken=args.max_broken, min_pass_rate=args.min_pass_rate,
         max_urgency_downgrades=args.max_urgency_downgrades, max_cost_per_call=args.max_cost_per_call,
         baseline=args.baseline,
+        expected_cases=[case.id for case in load_all_cases()] if args.gate else None,
     )
     (run_dir / "report.md").write_text(report)
     print(report)

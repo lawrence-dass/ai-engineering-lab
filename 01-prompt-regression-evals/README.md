@@ -53,7 +53,7 @@ uv run python -m evals.run --run main --models haiku luna   # 1,800 calls, cheap
 uv run python -m evals.run --run main --models opus sol     # 1,800 calls, strong models
 ```
 
-A rerun of the same command skips finished calls and retries failed ones.
+A rerun of the same command skips finished calls and retries failed ones. `--budget-usd` stops a run from starting new calls once it has spent that much.
 
 ### Reports, from the saved rows, with no model calls
 
@@ -138,7 +138,7 @@ The design, the alternatives that were turned down, and how each part of the pro
 - 50 cases is a small set. One case is 2 points of pass rate. The suite is built to show which cases changed. Its pass rates are rough.
 - The tickets are written by hand, not sampled from a real support queue.
 - The expected answers follow one written policy. A different policy would give different scores.
-- The prompt, the edits and the 40 visible tickets have one author. The 10 held-out tickets are the check on that.
+- The prompt, the edits and the 40 visible tickets have one author. The 10 held-out tickets are the check on that. Their text was drafted by an OpenAI model and their answers written by me, which may favour the OpenAI models on that set.
 - Neither vendor's flagship model is tested.
 
 ## Credits

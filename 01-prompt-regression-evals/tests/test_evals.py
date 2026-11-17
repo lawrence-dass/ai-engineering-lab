@@ -431,3 +431,12 @@ def test_ci_plan_compares_a_changed_production_prompt_with_the_base_branch_copy(
     assert plan([]) == ("v1_baseline", [])
     assert plan(["v3_add_example"]) == ("v1_baseline", ["v1_baseline", "v3_add_example"])
     assert plan(["v1_baseline"]) == (MAIN_COPY, [MAIN_COPY, "v1_baseline"])
+
+
+def test_run_stops_starting_calls_once_the_budget_is_spent(tmp_path):
+    # Each stub call costs about $0.00008, so a $0.0002 budget allows a few calls, not all twelve.
+    summary = run_stub(tmp_path, ["v1_baseline"], limit=4, reps=3, budget_usd=0.0002)
+    rows = load_rows(tmp_path / "t")
+    assert 0 < len(rows) < 12 and summary["over_budget"] == 12 - len(rows)
+    _, failures = build_report(rows, expected_cases=[case.id for case in load_cases()[:4]])
+    assert any("no results" in r or "repetitions" in r for r in failures)  # incomplete evidence fails closed

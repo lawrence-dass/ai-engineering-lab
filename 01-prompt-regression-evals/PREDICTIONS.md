@@ -14,9 +14,9 @@ For each edit, how many of the 50 cases (40 visible, 10 held-out) do I expect it
 | `v5_tidy_urgency`  | The urgency definitions and the tone rule shortened for readability                                 | 2         | 1        | 2          | 1           |
 | `v6_bundled_pr`    | Three changes at once: a shorter refund rule, a vaguer multi-issue rule, "if unsure, choose medium" | 3         | 2        | 4          | 2           |
 
-Baseline pass rate I expect, out of 50: Haiku ?, Opus ?, Luna ?, Sol ?
+Baseline pass rate I expect, out of 50: Haiku 38, Opus 39, Luna 37, Sol 39
 
-Date:
+Date: 16/11/2026
 
 ## Round 1: the first prompts (2026-11-15)
 

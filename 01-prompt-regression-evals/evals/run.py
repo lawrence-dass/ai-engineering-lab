@@ -188,9 +188,16 @@ def make_clients(models: list[str]) -> dict:
 
 
 async def run_job(
-    *, clients, triage_fn, semaphore, run_dir: Path, model: str, version: str, prompt: str, case: Case, rep: int
+    *, clients, triage_fn, semaphore, run_dir: Path, model: str, version: str, prompt: str, case: Case, rep: int,
+    budget: dict | None = None,
 ) -> dict:
-    """Runs one job and returns {"cost": float, "error": bool}."""
+    """Runs one job and returns {"cost": float, "error": bool, "over_budget": bool}.
+
+    budget is shared by every job in the run: {"limit": float or None, "spent": float}.
+    Once spending reaches the limit, jobs that have not started are skipped and
+    left without a row, so a rerun with a higher limit picks them up.
+    """
+    budget = budget if budget is not None else {"limit": None, "spent": 0.0}
     base = {"model": model, "version": version, "case_id": case.id, "rep": rep}
     provenance = {
         "case_sha": case_fingerprint(case),
@@ -200,6 +207,8 @@ async def run_job(
         "ran_at": now(),
     }
     async with semaphore:
+        if budget["limit"] is not None and budget["spent"] >= budget["limit"]:
+            return {"cost": 0.0, "error": False, "over_budget": True}
         try:
             result = await asyncio.wait_for(
                 triage_fn(clients, model=MODELS[model], system_prompt=prompt, ticket=case.ticket),
@@ -211,9 +220,10 @@ async def run_job(
             if "authentication method" in str(exc):  # the Anthropic SDK found no credentials at all
                 raise MissingCredentials("ANTHROPIC_API_KEY") from exc
             append(run_dir / "errors.jsonl", {**base, "error": classify_error(exc), "detail": str(exc)[:300]})
-            return {"cost": 0.0, "error": True}
+            return {"cost": 0.0, "error": True, "over_budget": False}
 
     cost = cost_usd(model, result.input_tokens, result.output_tokens, result.cache_read_tokens, result.cache_write_tokens)
+    budget["spent"] += cost
     usage = {
         "input_tokens": result.input_tokens,
         "cache_read_tokens": result.cache_read_tokens,
@@ -228,7 +238,7 @@ async def run_job(
     if result.status == "truncated" or wrong_model:
         error = "served_model_mismatch" if wrong_model else "truncated"
         append(run_dir / "errors.jsonl", {**base, "error": error, "served_model": result.served_model, **usage})
-        return {"cost": cost, "error": True}
+        return {"cost": cost, "error": True, "over_budget": False}
 
     graded = grade(case.expected, result.output)
     append(
@@ -253,7 +263,7 @@ async def run_job(
             **usage,
         },
     )
-    return {"cost": cost, "error": False}
+    return {"cost": cost, "error": False, "over_budget": False}
 
 
 async def run(
@@ -267,6 +277,7 @@ async def run(
     runs_dir: Path = RUNS_DIR,
     triage_fn=triage_ticket,
     clients=None,
+    budget_usd: float | None = None,
 ) -> dict:
     run_dir = runs_dir / run_name
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -276,6 +287,7 @@ async def run(
     done = load_done(run_dir / "results.jsonl")
     clients = clients if clients is not None else make_clients(models)
     semaphore = asyncio.Semaphore(concurrency)
+    budget = {"limit": budget_usd, "spent": 0.0}
 
     jobs = []
     for model in models:
@@ -294,14 +306,16 @@ async def run(
                     jobs.append(
                         run_job(
                             clients=clients, triage_fn=triage_fn, semaphore=semaphore, run_dir=run_dir,
-                            model=model, version=version, prompt=prompt, case=case, rep=rep,
+                            model=model, version=version, prompt=prompt, case=case, rep=rep, budget=budget,
                         )
                     )
 
     outcomes = await asyncio.gather(*jobs)
+    over_budget = sum(o["over_budget"] for o in outcomes)
     counts = {
         "skipped": len(done),
-        "ran": len(outcomes),
+        "ran": len(outcomes) - over_budget,
+        "over_budget": over_budget,
         "errors": sum(o["error"] for o in outcomes),
         "cost_usd": round(sum(o["cost"] for o in outcomes), 4),
     }
@@ -309,7 +323,7 @@ async def run(
         run_dir,
         {
             "started_at": started_at, "finished_at": now(), **code,
-            "models": models, "versions": versions, "reps": reps, "concurrency": concurrency,
+            "models": models, "versions": versions, "reps": reps, "concurrency": concurrency, "budget_usd": budget_usd,
             "limit": limit, "cases": len(cases), "heldout_cases": sum(c.split == "heldout" for c in cases), **counts,
         },
     )
@@ -328,12 +342,14 @@ def main() -> None:
     parser.add_argument("--reps", type=int, default=3, help="times each case is repeated")
     parser.add_argument("--concurrency", type=int, default=4)
     parser.add_argument("--limit", type=int, default=None, help="only the first N cases")
+    parser.add_argument("--budget-usd", type=float, default=None,
+                        help="stop starting new calls once this run has spent this much")
     args = parser.parse_args()
 
     try:
         summary = asyncio.run(
             run(run_name=args.run, models=args.models, versions=args.versions, reps=args.reps,
-                concurrency=args.concurrency, limit=args.limit)
+                concurrency=args.concurrency, limit=args.limit, budget_usd=args.budget_usd)
         )
     except MissingCredentials as exc:
         raise SystemExit(f"No API key found. Set {exc} and run again.")
@@ -349,6 +365,9 @@ def main() -> None:
     print(f"results in {summary['run_dir']}")
     if summary["errors"]:
         print("some calls failed. Run the same command again to retry them.")
+    if summary["over_budget"]:
+        print(f"{summary['over_budget']} calls not made: the ${args.budget_usd:.2f} budget was reached. "
+              "Rerun with a higher --budget-usd to finish them.")
 
 
 if __name__ == "__main__":

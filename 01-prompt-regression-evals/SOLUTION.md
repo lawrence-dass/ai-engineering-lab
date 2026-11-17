@@ -173,6 +173,8 @@ Cases, prompts and results are JSON Lines and Markdown. The harness is about 650
 
 The gate takes two settings: the number of broken cases allowed per prompt version (default 0) and a minimum pass rate (default none). It also fails when there are no results, when the baseline was never run, when a case has no answer on the new version, and when a threshold is not a valid number.
 
+With `--gate`, it also fails when any case in the case files has no rows for a version, or when some cases have fewer repetitions than the rest, as happens when a run stops at its budget.
+
 *Why:* a decision made on missing evidence is not the same as a decision made on zero failures. The first version of this harness skipped a case silently when every call for it had failed, which would have let a bad edit through.
 
 *Source:* stage 4 of the `prompt-regression-tester` project ("An empty suite fails closed", "missing responses are failures").
@@ -258,11 +260,13 @@ The examples are new tickets, none of them taken from the test set.
 
 ### 5.21 A held-out set from a second author
 
-`cases/heldout.jsonl` holds 10 tickets written by the owner from `LABELING_POLICY.md` alone, without reading the prompts. Prompt changes are made without reading it, and the report gives its pass rate in a column of its own.
+`cases/heldout.jsonl` holds 10 tickets. The ticket text was drafted by Codex, an OpenAI coding agent, given only `LABELING_POLICY.md`. The owner reviewed every ticket and wrote all the expected answers from the policy. The prompts were finished before anyone working on them read these cases, and the report gives their pass rate in a column of its own.
 
 *Why:* the prompt, the edits and the 40 visible tickets have one author, and a prompt can be tuned to the cases its author can see. A second author and a set that stays unread while editing are the resources' answer to both.
 
 *Turned down:* moving 10 of the existing tickets into a held-out file. They would still have the prompt's author.
+
+*Limit:* the ticket text comes from an OpenAI model, and two of the four models under test are OpenAI's. Tickets in a style GPT models write may be easier for GPT models to read, which could favour Luna and Sol on the held-out set. The expected answers are human-written.
 
 ### 5.22 The system prompt is cached
 
@@ -290,6 +294,15 @@ If the production prompt itself changed, the new text is compared with the copy 
 *Why:* a gate only protects the product if it runs automatically, before the merge. The cheap models keep it at about $0.15 a run, which makes running it on every pull request reasonable.
 
 *Limits:* the job needs both API keys as repository secrets, so pull requests from forks cannot run it. It checks two of the four models; the strong models are run by hand before a release.
+
+### 5.25 Two spending limits
+
+1. Each vendor account has a monthly spend limit, set in its console.
+2. The runner takes `--budget-usd`. Once a run has spent that much, it starts no new calls. Calls not made get no row, so the gate fails closed on the missing evidence, and a rerun with a higher budget finishes them.
+
+*Why:* a loop or a wrong flag can multiply calls far past the plan. The vendor limit caps the account, and the runner budget caps the run, which is what a person setting off a run actually intends to spend.
+
+*Limit:* calls already in flight when the budget is reached still finish, so a run can overshoot by up to the cost of a few calls.
 
 ## 6. Data formats
 
@@ -349,7 +362,7 @@ The tests use a stand-in for the model. A first run on the first prompts is kept
 
 ## 10. Testing
 
-41 tests in `tests/test_evals.py`, none of which call a model. They cover case validation, grading, the broken/flaky/fixed rule, resuming a run, the errors file, the report naming the right case, the per-tag and wrong-answer tables, label agreement, the run manifest, the OpenAI call (parsing, refusals, cut-off replies, cached tokens), the cost formula, the review rule in the feature and its measurement, prompt caching on the Claude call, held-out loading, the spreadsheet importer, the urgency gate rule, the cost limit, the CI plan, and each way the gate fails closed. The runner accepts the triage function as an argument, which is how the tests substitute a stand-in.
+42 tests in `tests/test_evals.py`, none of which call a model. They cover case validation, grading, the broken/flaky/fixed rule, resuming a run, the errors file, the report naming the right case, the per-tag and wrong-answer tables, label agreement, the run manifest, the OpenAI call (parsing, refusals, cut-off replies, cached tokens), the cost formula, the review rule in the feature and its measurement, prompt caching on the Claude call, held-out loading, the spreadsheet importer, the urgency gate rule, the cost limit, the CI plan, the run budget, and each way the gate fails closed. The runner accepts the triage function as an argument, which is how the tests substitute a stand-in.
 
 ## 11. Cost
 
@@ -400,6 +413,7 @@ What this experiment does that the reference project does not: it calls a live m
 | 2026-11-12 | Revised after reading the article 1 resources in full, which the first version was not based on. Added a fail-closed gate with tolerances (5.13) and fingerprints on every row (5.14). Added four known gaps and the table of what came from each resource. |
 | 2026-11-12 | Second revision after finishing the remaining resources. Added the per-tag breakdown (5.15), wrong-answer patterns (5.16) and the blind-label agreement check (5.17). |
 | 2026-11-14 | Added the run manifest (section 6) and the served model on every result row. |
+| 2026-11-16 | Added the run budget and spending limits (5.25), and gate checks for missing cases and repetitions (5.13). Recorded who wrote the held-out cases (5.21). |
 | 2026-11-16 | Rebuilt to production practice: a sectioned baseline with worked examples (5.19), a bundled edit (5.20), a held-out set (5.21), prompt caching (5.22), the review decision in the feature (5.18), an urgency gate rule and cost limit (5.23), and the gate in CI (5.24). The first run is kept in `runs/round1/`. |
 | 2026-11-16 | Added the review simulation (5.18). |
 | 2026-11-15 | Added two OpenAI models (5.2, 5.10, section 11). Cache reads, cache writes and reasoning tokens are recorded on every row and priced separately. |
