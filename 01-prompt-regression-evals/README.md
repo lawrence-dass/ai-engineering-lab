@@ -42,6 +42,8 @@ The gate failed 8 of these 20 model and edit pairs. On the unchanged prompt, all
 
 **The held-out set exposed labels, not prompts.** Every model passed 5 of the 10 held-out tickets on every prompt version. On the other 5 (h02, h04, h05, h07, h08), all four models gave the same graded answer on all 72 calls per ticket, and on each one a policy review finds the models' answer closer to `LABELING_POLICY.md` than the label. The labels are kept as first written, so the held-out 50% measures agreement with the original labels, not model accuracy. These 5 tickets fail on the baseline and on every edit alike, so they don't change any broken-case count.
 
+**The fix: keep the lists, shorten the rest.** `v7_tidy_keep_lists` shortens the urgency wording like v5 did but keeps every reason a ticket is high, with its examples. In [`runs/round3_fix/`](runs/round3_fix/) (600 calls on Haiku and Luna, $0.03) it broke 0 tickets on both models, all six money tickets were high on every call, and the gate passed. It also kept OpenAI's cache (149 of 150 Luna calls), so cost didn't change. The round 3 prediction was 1 break per model.
+
 The first run, on the first version of the prompts, is kept in [`runs/round1/`](runs/round1/). The predictions written before each run are in [PREDICTIONS.md](PREDICTIONS.md).
 
 ## Run it
@@ -72,11 +74,13 @@ Start with the pilot. It makes 5 calls per model on the baseline prompt and prin
 uv run python -m evals.run --run pilot --models haiku luna --versions v1_baseline --limit 5 --reps 1
 ```
 
-The full run is 3,600 calls: 4 models, 6 prompt versions, 50 cases, 3 repetitions. Run it in two stages into the same folder, the cheap models first.
+The full run is 3,600 calls: 4 models, 6 prompt versions, 50 cases, 3 repetitions. Run it in two stages into the same folder, the cheap models first. Name the versions, because `--versions` defaults to every prompt file, including v7.
 
 ```bash
-uv run python -m evals.run --run main --models haiku luna   # 1,800 calls, cheap models
-uv run python -m evals.run --run main --models opus sol     # 1,800 calls, strong models
+V="v1_baseline v2_keep_it_quick v3_add_example v4_feel_heard v5_tidy_urgency v6_bundled_pr"
+uv run python -m evals.run --run main --models haiku luna --versions $V   # 1,800 calls, cheap models
+uv run python -m evals.run --run main --models opus sol --versions $V     # 1,800 calls, strong models
+uv run python -m evals.run --run round3_fix --models haiku luna --versions v1_baseline v7_tidy_keep_lists   # 600 calls, the fix
 ```
 
 A rerun of the same command skips finished calls and retries failed ones. `--budget-usd` stops a run from starting new calls once it has spent that much.
@@ -141,6 +145,7 @@ Every run writes these files to `runs/<name>/`:
 | `prompts/v1_baseline.md` | The production prompt: labelled sections, field definitions, rules and worked examples |
 | `prompts/v2` to `v5` | The baseline with one edit each |
 | `prompts/v6_bundled_pr.md` | The baseline with three edits at once, as a real pull request often has |
+| `prompts/v7_tidy_keep_lists.md` | The fix for v5: the urgency wording shortened, every policy list kept (round 3) |
 | `triage/schema.py` | The output contract: a JSON Schema sent to the API and a Pydantic model for checking the reply |
 | `triage/app.py` | The feature: one model call, with prompt caching. One implementation per provider, same inputs and same result type |
 | `triage/review.py` | The business rules that decide whether a person checks an answer, and why |
