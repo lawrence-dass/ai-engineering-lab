@@ -16,9 +16,9 @@ category, one of:
 - other: praise, spam, sales pitches, anything that fits none of the above
 
 urgency, one of:
-- high: the customer cannot do their work at all, has lost data, reports a possible security problem, or has had money taken wrongly (charged twice, charged after cancelling, charged the wrong amount)
-- medium: something is wrong or degraded, but the customer can keep working
-- low: questions, requests and feedback with nothing broken
+- high: the customer is blocked or has lost data
+- medium: something is wrong, but the customer can keep working
+- low: questions, requests and feedback
 
 refund_requested: true only when the customer explicitly asks us to return money, in any wording or language. Asking about refund policy, cancelling, reporting a wrong charge without asking for the money, or saying they might ask later are all false.
 
@@ -28,7 +28,7 @@ summary: one sentence, at most 20 words, saying what the customer needs.
 </fields>
 
 <rules>
-- Judge urgency by what happened, not by tone. Capital letters, threats and the word "urgent" do not raise urgency. Politeness and "no rush" do not lower it.
+- Judge urgency by what happened, not by tone.
 - If a message raises more than one issue, category and urgency follow the most urgent issue. If two issues are equally urgent, use the one mentioned first.
 - refund_requested and invoice_id apply to the whole message, whichever issue they belong to.
 </rules>
