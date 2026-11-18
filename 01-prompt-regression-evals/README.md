@@ -16,7 +16,29 @@ The problem it addresses is set out in [PROBLEM.md](PROBLEM.md). The design is i
 
 ## Result
 
-Pending the final run. This section will hold the main finding and a link to the run it came from.
+From [`runs/main/`](runs/main/): 3,600 calls on four models, 0 errors, $3.07, from commit `2e85e7d`. Full tables in [report.md](runs/main/report.md) and [review.md](runs/main/review.md).
+
+**One readability edit broke 6 or 7 cases on the cheap models, and 0 or 1 on the strong ones.** `v5_tidy_urgency` shortened the urgency definitions. Haiku and Luna then rated tickets about money taken wrongly (double charges, a charge after cancelling, overbilled seats) as medium or low instead of high. Opus broke one of those tickets. Sol broke none.
+
+![Cases broken by each prompt edit, per model](assets/broken_by_edit.png)
+
+| Edit | Haiku 5.5 | GPT-6 Luna | Opus 5.5 | GPT-6.1 Sol |
+|---|---|---|---|---|
+| `v2_keep_it_quick` | 0 | 1 | 0 | 0 |
+| `v3_add_example` | 1 | 0 | 0 | 0 |
+| `v4_feel_heard` | 1 | 0 | 0 | 0 |
+| `v5_tidy_urgency` | 6 | 7 | 1 | 0 |
+| `v6_bundled_pr` | 0 | 1 | 0 | 0 |
+
+The gate failed 9 of these 20 model and edit pairs. On the unchanged prompt, all four models are within 2.5 points of each other on the visible tickets (95.0% to 97.5%). The difference between cheap and strong models shows up when a prompt edit goes wrong, not on the baseline.
+
+**The same edit tripled the OpenAI bill.** It cut the prompt to about 1,024 tokens on OpenAI, its cache minimum, so most calls missed the cache. Sol went from $0.68 to $2.12 per 1,000 calls, and Luna from $0.04 to $0.11. Claude caches from 512 tokens and was unaffected. On Sol, the edit broke no cases, so only a cost limit (`--max-cost-per-call`) would have caught it.
+
+![Cost per 1,000 calls before and after the edits that shortened the prompt](assets/cost_per_call_cache.png)
+
+**The held-out set exposed labels, not prompts.** Every model passed 5 of the 10 held-out tickets on every prompt version. On the other 5, all four models, from both vendors, gave the same answer on every call, and it differs from the expected answer. The expected answers are kept as first written, so the held-out pass rate stays at 50%.
+
+The first run, on the first version of the prompts, is kept in [`runs/round1/`](runs/round1/). The predictions written before each run are in [PREDICTIONS.md](PREDICTIONS.md).
 
 ## Run it
 
@@ -102,7 +124,7 @@ Every run writes these files to `runs/<name>/`:
 | `review.md` | How many wrong answers the review rule caught, written by `evals.review` |
 | `manifest.json` | The code commit, the model IDs requested and the ones that answered, run settings, the prices used for cost, and a history of every invocation |
 
-`runs/round1/` is the first run, on the first version of the prompts, kept as a record. Pilot runs are ignored by git. The run behind the article will be linked here.
+`runs/main/` is the run behind the result above. `runs/round1/` is the first run, on the first version of the prompts, kept as a record. Pilot runs are ignored by git.
 
 ## How it works
 
@@ -127,6 +149,7 @@ Every run writes these files to `runs/<name>/`:
 | `evals/import_cases.py` | Imports test cases from a spreadsheet, checking every row |
 | `evals/agreement.py` | Checks a second person's blind labels against the expected answers |
 | `PREDICTIONS.md` | What I expected, written before each run |
+| `assets/make_charts.py` | Draws the charts in `assets/` from a saved run, with no model calls: `uv run --with matplotlib python -m assets.make_charts --run main` |
 | `.env.example` | The settings a paid run needs |
 
 ## Design
