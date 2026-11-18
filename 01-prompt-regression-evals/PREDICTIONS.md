@@ -2,6 +2,22 @@
 
 Each round is written before its run and not edited afterwards.
 
+## Round 3: the fix for v5 (2026-11-18)
+
+`v7_tidy_keep_lists` shortens the urgency wording like v5 did, but keeps every reason a ticket is high (including money taken wrongly, with its examples) and the "with nothing broken" qualifier on low. Run on the cheap models only, against the baseline, in `runs/round3_fix/`.
+
+How many of the 50 cases will it break? "Break" means the case passed every repetition on the baseline and failed most repetitions on the edited prompt.
+
+| Edit                 | Haiku 5.5 | GPT-6 Luna |
+| -------------------- | --------- | ---------- |
+| `v7_tidy_keep_lists` | 1         | 1          |
+
+Expected: none of the six money tickets v5 broke (t06, t16, t21, t24, t35, t40) breaks again. The one break per model is most likely a ticket that already broke under unrelated edits in round 2: t33 on Haiku, t38 on Luna.
+
+Who made it: Claude proposed these numbers and the reasoning; Lawrence adopted them before the run.
+
+Date: 18/11/2026
+
 ## Round 2: the rebuilt prompts (2026-11-16)
 
 For each edit, how many of the 50 cases (40 visible, 10 held-out) do I expect it to break on each model? "Break" means the case passed every repetition on the baseline and failed most repetitions on the edited prompt.
