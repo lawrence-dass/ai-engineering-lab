@@ -5,15 +5,15 @@
 | **Owner** | Lawrence Dass |
 | **Status** | In review |
 | **Created** | 2026-11-12 |
-| **Last reviewed** | 2026-11-12 |
+| **Last reviewed** | 2026-11-18 |
 | **Problem** | [PROBLEM.md](PROBLEM.md) (Approved) |
 | **How to run** | [README.md](README.md) |
 
-This document explains how the solution works and why it is built this way. Results are not in it. They go in the README once the first full run is done.
+This document explains how the solution works and why it is built this way. Results are not in it. They are in the README, from the run in `runs/main/`.
 
 ## 1. Summary
 
-Run a fixed set of labelled tickets through the real triage code, once for the current prompt and once for each edited prompt, several times each. Part of the set is held out: written by a second author and never read while the prompts are edited. Grade every answer field by field. Report which tickets changed, and fail the check if any ticket that used to pass now fails, if an edit makes any ticket less urgent than it is, or if the evidence is incomplete. Run the same check in CI on every pull request that changes a prompt.
+Run a fixed set of labelled tickets through the real triage code, once for the current prompt and once for each edited prompt, several times each. Part of the set is held out: drafted by a second author, an AI model, and added after the prompts were finished. Grade every answer field by field. Report which tickets changed, and fail the check if any ticket that used to pass now fails, if an edit lowers the urgency of a ticket the baseline always got right, or if the evidence doesn't match the run's plan. Run the same check in CI on every pull request that changes a prompt.
 
 ## 2. Goals and non-goals
 
@@ -173,7 +173,9 @@ Cases, prompts and results are JSON Lines and Markdown. The harness is about 650
 
 The gate takes two settings: the number of broken cases allowed per prompt version (default 0) and a minimum pass rate (default none). It also fails when there are no results, when the baseline was never run, when a case has no answer on the new version, and when a threshold is not a valid number.
 
-With `--gate`, it also fails when any case in the case files has no rows for a version, or when some cases have fewer repetitions than the rest, as happens when a run stops at its budget.
+With `--gate`, the run's `manifest.json` gives the plan: every model, version, case and repetition its invocations asked for. The gate fails on any planned call with no result, any call recorded twice, any result the plan didn't ask for, and a run with no manifest. It also fails when a model has only baseline results, because there is no edit to judge.
+
+The first version inferred the expected repetitions from the data itself, so a run that was short everywhere, or a baseline-only run, passed. An independent review (Codex, 2026-11-18) found this; the plan check replaced it.
 
 *Why:* a decision made on missing evidence is not the same as a decision made on zero failures. The first version of this harness skipped a case silently when every call for it had failed, which would have let a bad edit through.
 
@@ -260,7 +262,9 @@ The examples are new tickets, none of them taken from the test set.
 
 ### 5.21 A held-out set from a second author
 
-`cases/heldout.jsonl` holds 10 tickets. The ticket text was drafted by Codex, an OpenAI coding agent, given only `LABELING_POLICY.md`. The owner reviewed every ticket and wrote all the expected answers from the policy. The prompts were finished before anyone working on them read these cases, and the report gives their pass rate in a column of its own.
+`cases/heldout.jsonl` holds 10 tickets. The ticket text was drafted by Codex, an OpenAI coding agent, given `LABELING_POLICY.md` to write from. Codex later disclosed that the same session had earlier seen parts of this experiment, including one visible ticket, so the drafting was not fully isolated. The owner reviewed every ticket and wrote all the expected answers from the policy. The prompts were committed before the held-out file was added, and the report gives their pass rate in a column of its own.
+
+*After the run:* all four models gave the same graded answer on 5 of the 10 tickets, on every call, and a policy review finds those answers closer to the policy than the labels. The labels are kept as written. The held-out pass rate is therefore agreement with the original labels, not model accuracy.
 
 *Why:* the prompt, the edits and the 40 visible tickets have one author, and a prompt can be tuned to the cases its author can see. A second author and a set that stays unread while editing are the resources' answer to both.
 
@@ -276,7 +280,7 @@ The Claude call marks the system prompt with `cache_control`, and OpenAI caches 
 
 ### 5.23 Urgency gets its own gate rule, and cost has a limit
 
-Any case whose urgency an edit lowers fails the gate, whatever `--max-broken` allows (`--max-urgency-downgrades`, default 0). The report shows cost per call and cost per correct ticket, and `--max-cost-per-call` can fail the gate on cost.
+A case whose urgency was right on every baseline call, and which the edit rates lower than expected on most calls, fails the gate, whatever `--max-broken` allows (`--max-urgency-downgrades`, default 0). A single lower call, or a case whose baseline urgency was already wrong, is not caught by this rule; it shows up as flaky. The report shows cost per call and cost per correct ticket, and `--max-cost-per-call` can fail the gate on cost.
 
 *Why:* a ticket rated less urgent than it is waits when it should page someone. The eval-gated CI case study gates each quality axis on its own, because one combined score hides the axis that matters most. This answers open question 4.
 
@@ -331,7 +335,7 @@ The numbers match [PROBLEM.md, section 5](PROBLEM.md#5-parts-of-the-problem).
 | 5 | Same input, different answers | Three repetitions and the broken/flaky rule (5.5, 5.6) | Handled. Number of repetitions unproven |
 | 6 | Behaviour depends on the model | Four models, two vendors, reported separately (5.10) | Handled for four models |
 | 7 | Failed calls are not wrong answers | Separate errors file (5.7) | Handled |
-| 8 | Cheap enough to run every time | Concurrent calls, resumable runs, cost recorded per call | Not yet measured |
+| 8 | Cheap enough to run every time | Concurrent calls, resumable runs, cost recorded per call | Measured: all 6 versions on both cheap models cost $0.11 in `runs/main` |
 | 9 | A small test set limits detection | Interval beside each pass rate (5.11) | Shown, not solved |
 | 10 | Nobody owns the decision to ship | `--gate` with explicit tolerances, failing closed (5.13), run in CI on every prompt change (5.24) | Handled |
 | 11 | A test set goes stale | Fingerprints catch edits within a run (5.14). A spreadsheet importer makes adding cases easy. Nothing rotates or refreshes cases | Partly |
@@ -346,9 +350,9 @@ The numbers match [PROBLEM.md, section 5](PROBLEM.md#5-parts-of-the-problem).
 | 3 | Restartable without loss or double-counting | Met | `test_run_writes_one_row_per_job_and_resumes_without_duplicates` |
 | 4 | Runs in CI and fails when a ticket breaks | Met, not yet run on GitHub | `prompt-gate` job (5.24), `test_ci_plan_compares_a_changed_production_prompt_with_the_base_branch_copy` |
 | 5 | Adding a case is one line in a data file | Met | `cases/tickets.jsonl`, or a spreadsheet row through `evals/import_cases.py` |
-| 6 | Cost and duration recorded | Partly | Recorded per call. No full run yet |
+| 6 | Cost and duration recorded | Met | `runs/main/manifest.json`: $3.07 for 3,600 calls, with start and finish times per invocation |
 
-The tests use a stand-in for the model. A first run on the first prompts is kept in `runs/round1/`.
+The tests use a stand-in for the model. The full run is `runs/main/`; a first run on the first prompts is kept in `runs/round1/`.
 
 ## 9. Known gaps
 
@@ -362,7 +366,7 @@ The tests use a stand-in for the model. A first run on the first prompts is kept
 
 ## 10. Testing
 
-42 tests in `tests/test_evals.py`, none of which call a model. They cover case validation, grading, the broken/flaky/fixed rule, resuming a run, the errors file, the report naming the right case, the per-tag and wrong-answer tables, label agreement, the run manifest, the OpenAI call (parsing, refusals, cut-off replies, cached tokens), the cost formula, the review rule in the feature and its measurement, prompt caching on the Claude call, held-out loading, the spreadsheet importer, the urgency gate rule, the cost limit, the CI plan, the run budget, and each way the gate fails closed. The runner accepts the triage function as an argument, which is how the tests substitute a stand-in.
+50 tests in `tests/test_evals.py`, none of which call a model. They cover case validation, grading, the broken/flaky/fixed rule, resuming a run, the errors file, the report naming the right case, the per-tag and wrong-answer tables, label agreement, the run manifest, the OpenAI call (parsing, refusals, cut-off replies, cached tokens), the cost formula, the review rule in the feature and its measurement, prompt caching on the Claude call, held-out loading, the spreadsheet importer, the urgency gate rule, the cost limit, the CI plan, the run budget, the paired change interval, ties in the review simulation, and each way the gate fails closed, including runs that don't match their plan. The runner accepts the triage function as an argument, which is how the tests substitute a stand-in.
 
 ## 11. Cost
 
@@ -377,7 +381,7 @@ Prices used for cost tracking, in US dollars per million tokens, checked against
 
 OpenAI caches prompts of 1,024 tokens or more automatically. Anthropic caches when the request asks for it, which the feature now does (5.22). Cached tokens are recorded and priced on every row.
 
-A ten-call pilot on the two Claude models on 2026-11-15 cost $0.0318: about $0.00016 per call on Haiku and $0.0062 on Opus. The cost of a full run has not been measured. Each new model gets a pilot first, and the measured cost is checked against the budget before the full run.
+A ten-call pilot on the two Claude models on 2026-11-15 cost $0.0318. The full run in `runs/main/` cost $3.07 for 3,600 calls: $0.11 for both cheap models across all six prompt versions, and $2.96 for the strong models. Per 1,000 calls on the baseline: Haiku $0.07, Luna $0.04, Sol $0.68, Opus $2.29.
 
 ## 12. Open questions
 
@@ -416,5 +420,6 @@ What this experiment does that the reference project does not: it calls a live m
 | 2026-11-16 | Added the run budget and spending limits (5.25), and gate checks for missing cases and repetitions (5.13). Recorded who wrote the held-out cases (5.21). |
 | 2026-11-16 | Rebuilt to production practice: a sectioned baseline with worked examples (5.19), a bundled edit (5.20), a held-out set (5.21), prompt caching (5.22), the review decision in the feature (5.18), an urgency gate rule and cost limit (5.23), and the gate in CI (5.24). The first run is kept in `runs/round1/`. |
 | 2026-11-16 | Added the review simulation (5.18). |
+| 2026-11-18 | After the full run and an independent review: the gate now checks results against the run's plan (5.13), the urgency rule is described as built (5.23), the report gives a paired interval for each edit's change, and the review simulation counts a three-way split as no majority. Status and cost updated from `runs/main/`. |
 | 2026-11-15 | Added two OpenAI models (5.2, 5.10, section 11). Cache reads, cache writes and reasoning tokens are recorded on every row and priced separately. |
 | 2026-11-15 | Recorded the blind labelling result and the decision on open question 3 (section 9, section 12). |

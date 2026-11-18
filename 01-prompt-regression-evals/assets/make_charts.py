@@ -16,7 +16,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
-from evals.report import compare, load_rows, summarise  # noqa: E402
+from evals.report import compare, load_rows, paired_change_ci, summarise  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
@@ -116,11 +116,20 @@ def cost_chart(grouped, out: Path) -> None:
         ax.set_ylabel("Cost per 1,000 calls (USD)", color=TEXT_2)
         ax.legend(frameon=False, fontsize=8.5, labelcolor=TEXT, loc="upper left")
         ax.set_ylim(0, ax.get_ylim()[1] * 1.2)
-    fig.suptitle("A shorter prompt lost OpenAI's cache and cost about 3 times as much",
+    def openai_stats(key, version):
+        rows = grouped[(key, version)]
+        tokens = sum(r["input_tokens"] + r["cache_read_tokens"] + r["cache_write_tokens"] for r in rows) / len(rows)
+        return tokens, sum(r["cache_read_tokens"] > 0 for r in rows), sum(r["cost_usd"] for r in rows)
+
+    (lt0, lh0, lc0), (lt5, lh5, lc5) = openai_stats("luna", "v1_baseline"), openai_stats("luna", "v5_tidy_urgency")
+    (_, sh0, sc0), (_, sh5, sc5) = openai_stats("sol", "v1_baseline"), openai_stats("sol", "v5_tidy_urgency")
+    fig.suptitle(f"A shorter prompt lost OpenAI's cache hits and cost {lc5 / lc0:.1f} to {sc5 / sc0:.1f} times as much",
                  x=0.06, ha="left", fontsize=13, color=TEXT, fontweight="bold")
-    fig.text(0.06, 0.855, "The tidy-up cut the prompt to about 1,024 tokens on OpenAI, its cache minimum, so most calls missed the cache.\n"
-             "Claude caches from 512 tokens and was unaffected. Cheap models left, strong right.", fontsize=9, color=TEXT_2)
-    fig.tight_layout(rect=(0, 0, 1, 0.86))
+    fig.text(0.06, 0.845, f"The tidy-up cut the average OpenAI request from {lt0:,.0f} to {lt5:,.0f} input tokens, near its "
+             f"1,024-token cache minimum.\nCalls reading the cache fell from {lh0} to {lh5} of 150 on Luna, and from "
+             f"{sh0} to {sh5} on Sol.\nClaude's cost barely moved. Cheap models left, strong right.",
+             fontsize=9, color=TEXT_2)
+    fig.tight_layout(rect=(0, 0, 1, 0.80))
     fig.savefig(out, facecolor=SURFACE)
     plt.close(fig)
 
@@ -129,39 +138,35 @@ def model_info(key: str) -> tuple[str, str]:
     return next((name, color) for k, name, color in MODELS if k == key)
 
 
-def pass_rate_chart(grouped, out: Path) -> None:
-    """Pass rate with its 95% interval per edit, and the broken-case count beside it."""
-    versions = [("v1_baseline", "Base-\nline")] + EDITS
-    fig, axes = plt.subplots(2, 2, figsize=(10, 7), dpi=200, facecolor=SURFACE, sharey=True)
-    all_overlap = True
-    for ax, (key, name, color) in zip(axes.flat, MODELS):
-        style(ax)
+def v5_change_chart(grouped, out: Path) -> None:
+    """Each model's pass-rate change under the urgency tidy-up, paired by case, with what broke and what was fixed."""
+    fig, ax = plt.subplots(figsize=(9, 5.2), dpi=200, facecolor=SURFACE)
+    style(ax)
+    for x, (key, name, color) in enumerate(MODELS):
         base = summarise(grouped[(key, "v1_baseline")])
-        for x, (v, _) in enumerate(versions):
-            summary = summarise(grouped[(key, v)])
-            low, high = summary["ci"]
-            if v != "v1_baseline" and (low > base["ci"][1] or high < base["ci"][0]):
-                all_overlap = False
-            ax.plot([x, x], [100 * low, 100 * high], color=color, linewidth=2, solid_capstyle="round")
-            ax.plot(x, 100 * summary["pass_rate"], "o", markersize=8, color=color,
-                    markeredgecolor=SURFACE, markeredgewidth=2)
-            if v != "v1_baseline":
-                broken = len(compare(base, summary)["broken"])
-                ax.annotate(f"{broken} broken", (x, 100 * high), xytext=(0, 6), textcoords="offset points",
-                            ha="center", fontsize=8.5, color=TEXT if broken else TEXT_2,
-                            fontweight="bold" if broken else "normal")
-        ax.axhspan(100 * base["ci"][0], 100 * base["ci"][1], color=GRID, alpha=0.6, zorder=0, linewidth=0)
-        ax.set_title(name, loc="left", fontsize=10.5, color=TEXT)
-        ax.set_xticks(range(len(versions)), [label for _, label in versions], fontsize=8, color=TEXT)
-        ax.set_ylim(55, 104)
-    for ax in axes[:, 0]:
-        ax.set_ylabel("Pass rate (%)", color=TEXT_2)
-    assert all_overlap, "the title claims every interval overlaps the baseline's"
-    fig.suptitle("Every interval overlaps the baseline's. The case-by-case check still found the breaks",
-                 x=0.05, ha="left", fontsize=13, color=TEXT, fontweight="bold")
-    fig.text(0.05, 0.925, "Dot: pass rate over 50 cases. Line: 95% interval (bootstrap over cases). "
-             "Grey band: the baseline's interval. Label: cases broken by the edit.", fontsize=9, color=TEXT_2)
-    fig.tight_layout(rect=(0, 0, 1, 0.92))
+        cand = summarise(grouped[(key, "v5_tidy_urgency")])
+        mean, low, high = paired_change_ci(base["fractions"], cand["fractions"])
+        moved = compare(base, cand)
+        ax.bar(x, 100 * mean, 0.55, color=color, edgecolor=SURFACE, linewidth=1)
+        ax.plot([x, x], [100 * low, 100 * high], color=TEXT_2, linewidth=1.5, solid_capstyle="round")
+        note = f"{len(moved['broken'])} broken"
+        if moved["fixed"]:
+            note += f", {len(moved['fixed'])} fixed"
+        note += f"\n{100 * base['pass_rate']:.1f}% to {100 * cand['pass_rate']:.1f}%"
+        ax.annotate(note, (x + 0.08, 100 * high if mean >= 0 else 100 * low), xytext=(6, 4 if mean >= 0 else -4),
+                    textcoords="offset points", ha="left", va="bottom" if mean >= 0 else "top", fontsize=9, color=TEXT)
+    ax.axhline(0, color=TEXT_2, linewidth=1)
+    ax.spines["bottom"].set_visible(False)
+    ax.set_xticks(range(len(MODELS)), [name.replace(" (", "\n(") for _, name, _ in MODELS], fontsize=9.5, color=TEXT)
+    ax.tick_params(axis="x", pad=8)
+    ax.set_ylabel("Change in pass rate (points)", color=TEXT_2)
+    ax.set_ylim(-31, 10)
+    fig.suptitle("The cheap models' scores fell. On Opus the score held while a ticket broke",
+                 x=0.06, ha="left", fontsize=12.5, color=TEXT, fontweight="bold")
+    fig.text(0.06, 0.875, "Bar: change in pass rate after the urgency tidy-up (v5), over the same 50 tickets. "
+             "Line: paired 95% interval, resampled by ticket.\nOn Opus, t40 (a double charge, in French) broke "
+             "and t29 was fixed, so the score didn't move.", fontsize=9, color=TEXT_2)
+    fig.tight_layout(rect=(0, 0, 1, 0.86))
     fig.savefig(out, facecolor=SURFACE)
     plt.close(fig)
 
@@ -188,15 +193,15 @@ def cost_scatter(grouped, out: Path) -> None:
     ax.set_xscale("log")
     ax.xaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(lambda x, _: f"${x:g}"))
     ax.tick_params(axis="x", colors=TEXT_2)
-    ax.set_xlabel("Cost per 1,000 correct tickets (USD, log scale)", color=TEXT_2)
+    ax.set_xlabel("Cost per 1,000 correct answers (USD, log scale; one call = one answer)", color=TEXT_2)
     ax.set_ylabel("Pass rate (%)", color=TEXT_2)
     ax.set_ylim(65, 98)
     ax.set_xlim(0.025, 6)
     ratio = per_correct["opus"] / per_correct["haiku"]
-    fig.suptitle(f"Opus costs {ratio:.0f} times Haiku per correct ticket, for nearly the same baseline pass rate",
+    fig.suptitle(f"Opus costs {ratio:.0f} times Haiku per correct answer, for nearly the same baseline pass rate",
                  x=0.06, ha="left", fontsize=12.5, color=TEXT, fontweight="bold")
     fig.text(0.06, 0.865, "Filled dot: the baseline prompt. Open ring: after the urgency tidy-up (v5). Labels give the baseline cost.\n"
-             "The cheap models lose accuracy. Sol keeps it, but its cost per correct ticket triples as the cache is lost.", fontsize=9, color=TEXT_2)
+             "The cheap models lose accuracy. Sol keeps it, but its cost per correct answer rises about 3 times as cache hits fall.", fontsize=9, color=TEXT_2)
     fig.tight_layout(rect=(0, 0, 1, 0.85))
     fig.savefig(out, facecolor=SURFACE)
     plt.close(fig)
@@ -243,7 +248,7 @@ def predictions_chart(grouped, out: Path) -> None:
     axes[0].invert_yaxis()
     fig.suptitle("I expected \"feel heard\" and the three-change edit to do the damage. The tidy-up did",
                  x=0.04, ha="left", fontsize=12.5, color=TEXT, fontweight="bold")
-    fig.text(0.04, 0.875, "Open dot: my prediction, committed before the run. Filled dot: what broke.",
+    fig.text(0.04, 0.875, "Open dot: my prediction, committed before round 2 (after round 1, on older prompts). Filled dot: what broke.",
              fontsize=9, color=TEXT_2)
     fig.tight_layout(rect=(0, 0, 1, 0.87))
     fig.savefig(out, facecolor=SURFACE)
@@ -259,7 +264,7 @@ def main() -> None:
     charts = {
         "broken_by_edit.png": broken_chart,
         "cost_per_call_cache.png": cost_chart,
-        "pass_rate_vs_broken.png": pass_rate_chart,
+        "v5_change_by_model.png": v5_change_chart,
         "cost_per_correct.png": cost_scatter,
         "predictions_vs_actual.png": predictions_chart,
     }
