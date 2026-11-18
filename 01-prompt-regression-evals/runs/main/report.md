@@ -83,7 +83,7 @@ Wrong answers on v6_bundled_pr:
 
 ### v2_keep_it_quick vs v1_baseline
 
-Pass rate +2.0%. Broken: 0. Fixed: 1. Flaky: 2. Missing: 0. Urgency lowered: 0.
+Pass rate +2.0% (paired 95% interval -1.3% to +7.3%). Broken: 0. Fixed: 1. Flaky: 2. Missing: 0. Urgency lowered: 0.
 
 - **fixed** `t34`
 - **flaky** `t29`
@@ -91,21 +91,21 @@ Pass rate +2.0%. Broken: 0. Fixed: 1. Flaky: 2. Missing: 0. Urgency lowered: 0.
 
 ### v3_add_example vs v1_baseline
 
-Pass rate -3.3%. Broken: 1. Fixed: 0. Flaky: 1. Missing: 0. Urgency lowered: 1.
+Pass rate -3.3% (paired 95% interval -8.7% to +0.0%). Broken: 1. Fixed: 0. Flaky: 1. Missing: 0. Urgency lowered: 1.
 
 - **broken** `t33`: urgency: medium (want high)
 - **flaky** `t29`: urgency: low (want medium)
 
 ### v4_feel_heard vs v1_baseline
 
-Pass rate -1.3%. Broken: 1. Fixed: 0. Flaky: 1. Missing: 0. Urgency lowered: 1.
+Pass rate -1.3% (paired 95% interval -6.0% to +2.0%). Broken: 1. Fixed: 0. Flaky: 1. Missing: 0. Urgency lowered: 1.
 
 - **broken** `t33`: urgency: medium (want high)
 - **flaky** `t29`
 
 ### v5_tidy_urgency vs v1_baseline
 
-Pass rate -11.3%. Broken: 6. Fixed: 0. Flaky: 1. Missing: 0. Urgency lowered: 7.
+Pass rate -11.3% (paired 95% interval -21.3% to -3.3%). Broken: 6. Fixed: 0. Flaky: 1. Missing: 0. Urgency lowered: 7.
 
 - **broken** `t06`: urgency: medium (want high)
 - **broken** `t16`: urgency: medium (want high)
@@ -117,7 +117,7 @@ Pass rate -11.3%. Broken: 6. Fixed: 0. Flaky: 1. Missing: 0. Urgency lowered: 7.
 
 ### v6_bundled_pr vs v1_baseline
 
-Pass rate +0.0%. Broken: 0. Fixed: 0. Flaky: 2. Missing: 0. Urgency lowered: 1.
+Pass rate +0.0% (paired 95% interval -2.0% to +2.0%). Broken: 0. Fixed: 0. Flaky: 2. Missing: 0. Urgency lowered: 1.
 
 - **flaky** `t15`: category: how_to (want billing)
 - **flaky** `t29`
@@ -210,25 +210,25 @@ Wrong answers on v6_bundled_pr:
 
 ### v2_keep_it_quick vs v1_baseline
 
-Pass rate -2.7%. Broken: 1. Fixed: 0. Flaky: 1. Missing: 0. Urgency lowered: 1.
+Pass rate -2.7% (paired 95% interval -7.3% to +0.0%). Broken: 1. Fixed: 0. Flaky: 1. Missing: 0. Urgency lowered: 1.
 
 - **broken** `t38`: urgency: low (want medium)
 - **flaky** `t36`: category: billing (want how_to)
 
 ### v3_add_example vs v1_baseline
 
-Pass rate -1.3%. Broken: 0. Fixed: 0. Flaky: 2. Missing: 0. Urgency lowered: 0.
+Pass rate -1.3% (paired 95% interval -3.3% to +0.0%). Broken: 0. Fixed: 0. Flaky: 2. Missing: 0. Urgency lowered: 0.
 
 - **flaky** `t30`: category: bug (want billing)
 - **flaky** `t36`: category: billing (want how_to)
 
 ### v4_feel_heard vs v1_baseline
 
-Pass rate +0.0%. Broken: 0. Fixed: 0. Flaky: 0. Missing: 0. Urgency lowered: 0.
+Pass rate +0.0% (paired 95% interval +0.0% to +0.0%). Broken: 0. Fixed: 0. Flaky: 0. Missing: 0. Urgency lowered: 0.
 
 ### v5_tidy_urgency vs v1_baseline
 
-Pass rate -14.0%. Broken: 7. Fixed: 0. Flaky: 2. Missing: 0. Urgency lowered: 7.
+Pass rate -14.0% (paired 95% interval -24.0% to -6.0%). Broken: 7. Fixed: 0. Flaky: 2. Missing: 0. Urgency lowered: 7.
 
 - **broken** `t06`: urgency: medium (want high)
 - **broken** `t16`: urgency: low (want high), medium (want high)
@@ -242,7 +242,7 @@ Pass rate -14.0%. Broken: 7. Fixed: 0. Flaky: 2. Missing: 0. Urgency lowered: 7.
 
 ### v6_bundled_pr vs v1_baseline
 
-Pass rate -2.7%. Broken: 1. Fixed: 0. Flaky: 4. Missing: 0. Urgency lowered: 1.
+Pass rate -2.7% (paired 95% interval -6.7% to +0.7%). Broken: 1. Fixed: 0. Flaky: 4. Missing: 0. Urgency lowered: 1.
 
 - **broken** `t38`: urgency: low (want medium)
 - **flaky** `t15`: category: how_to (want billing)
@@ -324,30 +324,30 @@ Wrong answers on v6_bundled_pr:
 
 ### v2_keep_it_quick vs v1_baseline
 
-Pass rate +0.0%. Broken: 0. Fixed: 0. Flaky: 0. Missing: 0. Urgency lowered: 0.
+Pass rate +0.0% (paired 95% interval +0.0% to +0.0%). Broken: 0. Fixed: 0. Flaky: 0. Missing: 0. Urgency lowered: 0.
 
 ### v3_add_example vs v1_baseline
 
-Pass rate +2.0%. Broken: 0. Fixed: 1. Flaky: 0. Missing: 0. Urgency lowered: 0.
+Pass rate +2.0% (paired 95% interval +0.0% to +6.0%). Broken: 0. Fixed: 1. Flaky: 0. Missing: 0. Urgency lowered: 0.
 
 - **fixed** `t29`
 
 ### v4_feel_heard vs v1_baseline
 
-Pass rate +1.3%. Broken: 0. Fixed: 1. Flaky: 0. Missing: 0. Urgency lowered: 0.
+Pass rate +1.3% (paired 95% interval +0.0% to +4.0%). Broken: 0. Fixed: 1. Flaky: 0. Missing: 0. Urgency lowered: 0.
 
 - **fixed** `t29`: urgency: low (want medium)
 
 ### v5_tidy_urgency vs v1_baseline
 
-Pass rate +0.0%. Broken: 1. Fixed: 1. Flaky: 0. Missing: 0. Urgency lowered: 1.
+Pass rate +0.0% (paired 95% interval -6.0% to +6.0%). Broken: 1. Fixed: 1. Flaky: 0. Missing: 0. Urgency lowered: 1.
 
 - **broken** `t40`: urgency: medium (want high)
 - **fixed** `t29`
 
 ### v6_bundled_pr vs v1_baseline
 
-Pass rate +2.0%. Broken: 0. Fixed: 1. Flaky: 0. Missing: 0. Urgency lowered: 0.
+Pass rate +2.0% (paired 95% interval +0.0% to +6.0%). Broken: 0. Fixed: 1. Flaky: 0. Missing: 0. Urgency lowered: 0.
 
 - **fixed** `t29`
 
@@ -430,24 +430,24 @@ Wrong answers on v6_bundled_pr:
 
 ### v2_keep_it_quick vs v1_baseline
 
-Pass rate +0.0%. Broken: 0. Fixed: 0. Flaky: 0. Missing: 0. Urgency lowered: 0.
+Pass rate +0.0% (paired 95% interval +0.0% to +0.0%). Broken: 0. Fixed: 0. Flaky: 0. Missing: 0. Urgency lowered: 0.
 
 ### v3_add_example vs v1_baseline
 
-Pass rate +0.0%. Broken: 0. Fixed: 0. Flaky: 0. Missing: 0. Urgency lowered: 0.
+Pass rate +0.0% (paired 95% interval +0.0% to +0.0%). Broken: 0. Fixed: 0. Flaky: 0. Missing: 0. Urgency lowered: 0.
 
 ### v4_feel_heard vs v1_baseline
 
-Pass rate +0.0%. Broken: 0. Fixed: 0. Flaky: 0. Missing: 0. Urgency lowered: 0.
+Pass rate +0.0% (paired 95% interval +0.0% to +0.0%). Broken: 0. Fixed: 0. Flaky: 0. Missing: 0. Urgency lowered: 0.
 
 ### v5_tidy_urgency vs v1_baseline
 
-Pass rate +1.3%. Broken: 0. Fixed: 1. Flaky: 1. Missing: 0. Urgency lowered: 0.
+Pass rate +1.3% (paired 95% interval -2.0% to +6.0%). Broken: 0. Fixed: 1. Flaky: 1. Missing: 0. Urgency lowered: 0.
 
 - **fixed** `t30`
 - **flaky** `t24`: urgency: medium (want high)
 
 ### v6_bundled_pr vs v1_baseline
 
-Pass rate +0.0%. Broken: 0. Fixed: 0. Flaky: 0. Missing: 0. Urgency lowered: 0.
+Pass rate +0.0% (paired 95% interval +0.0% to +0.0%). Broken: 0. Fixed: 0. Flaky: 0. Missing: 0. Urgency lowered: 0.
 

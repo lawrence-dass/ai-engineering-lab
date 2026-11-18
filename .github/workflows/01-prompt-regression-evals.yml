@@ -30,7 +30,8 @@ jobs:
   # The regression gate itself. On a pull request that changes a prompt, run the
   # changed versions and the baseline on the two cheap models and block the merge
   # if a case broke, urgency was lowered, or the evidence is incomplete.
-  # Needs ANTHROPIC_API_KEY and OPENAI_API_KEY as repository secrets. About $0.15 a run.
+  # Needs ANTHROPIC_API_KEY and OPENAI_API_KEY as repository secrets. One changed prompt and the
+  # baseline on both cheap models is about $0.04 (estimated from the main run), capped at $1.
   prompt-gate:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
@@ -57,7 +58,7 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        run: uv run python -m evals.run --run ci --models haiku luna --versions ${{ steps.plan.outputs.VERSIONS }}
+        run: uv run python -m evals.run --run ci --budget-usd 1 --models haiku luna --versions ${{ steps.plan.outputs.VERSIONS }}
       - if: steps.plan.outputs.VERSIONS != ''
         run: uv run python -m evals.report --run ci --baseline "${{ steps.plan.outputs.BASELINE }}" --gate
       - if: always() && steps.plan.outputs.VERSIONS != ''

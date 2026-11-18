@@ -10,19 +10,29 @@ reported as flaky, not as a regression.
 
 Urgency gets its own rule. A ticket rated less urgent than it is waits in the
 general queue when it should page someone, which is the costliest mistake this
-feature can make, so any case whose urgency an edit lowers fails the gate on its
-own, whatever --max-broken allows.
+feature can make. A case whose urgency was right on every baseline call, and is
+rated lower than expected on most calls of the new version, fails the gate on
+its own, whatever --max-broken allows. Single calls that dip, and cases whose
+baseline urgency was already wrong, are not caught by this rule; they show up
+as flaky in the report.
 
-The gate fails closed. No results, no baseline, a case with no answer on the new
-version, or cases edited between versions all fail it, because a decision made
-on missing evidence is not the same as a decision made on zero failures.
+Each edit also gets a paired 95% interval for its pass-rate change: the
+per-case differences from the baseline, resampled by case.
+
+The gate fails closed. No results, no baseline, no edited version, a case with
+no answer on the new version, or cases edited between versions all fail it. With
+--gate, the run's manifest gives the plan (every model x version x case x
+repetition that was asked for), and any missing, duplicate or unplanned call
+fails the gate too, because a decision made on missing evidence is not the same
+as a decision made on zero failures.
 """
 
 import argparse
 import json
+import math
 import random
 import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
 
 from evals.cases import load_all_cases
@@ -128,6 +138,50 @@ def urgency_downgrades(baseline_rows: list[dict], candidate_rows: list[dict]) ->
     return sorted(lowered)
 
 
+def paired_change_ci(baseline: dict[str, float], candidate: dict[str, float], *, samples: int = 2000,
+                     seed: int = 7) -> tuple[float, float, float] | None:
+    """Mean change in pass rate over the cases both versions answered, with a 95% interval from resampling cases."""
+    shared = sorted(set(baseline) & set(candidate))
+    if not shared:
+        return None
+    diffs = [candidate[case_id] - baseline[case_id] for case_id in shared]
+    rng = random.Random(seed)
+    means = sorted(sum(rng.choice(diffs) for _ in diffs) / len(diffs) for _ in range(samples))
+    return sum(diffs) / len(diffs), means[int(0.025 * samples)], means[int(0.975 * samples) - 1]
+
+
+def planned_jobs(manifest: dict, case_ids: list[str]) -> set[tuple[str, str, str, int]]:
+    """Every (model, version, case, repetition) the run's invocations asked for."""
+    jobs = set()
+    for invocation in manifest.get("invocations", []):
+        for model in invocation["models"]:
+            for version in invocation["versions"]:
+                for case_id in case_ids:
+                    for rep in range(invocation["reps"]):
+                        jobs.add((model, version, case_id, rep))
+    return jobs
+
+
+def plan_problems(rows: list[dict], planned: set[tuple[str, str, str, int]]) -> list[str]:
+    """Reasons the results do not match the plan: missing, duplicate or unplanned calls."""
+    if not planned:
+        return ["the manifest records no planned calls"]
+    seen = Counter((r["model"], r["version"], r["case_id"], r["rep"]) for r in rows)
+    reasons = []
+    duplicates = sorted(job for job, n in seen.items() if n > 1)
+    if duplicates:
+        reasons.append(f"{len(duplicates)} calls recorded more than once ({', '.join(map(str, duplicates[:3]))})")
+    unplanned = sorted(set(seen) - planned)
+    if unplanned:
+        reasons.append(f"{len(unplanned)} calls that the plan did not ask for ({', '.join(map(str, unplanned[:3]))})")
+    missing: dict[tuple[str, str], int] = defaultdict(int)
+    for model, version, _, _ in planned - set(seen):
+        missing[(model, version)] += 1
+    for (model, version), n in sorted(missing.items()):
+        reasons.append(f"{model} {version}: {n} planned calls have no result")
+    return reasons
+
+
 def incomplete(model: str, versions: dict[str, list[dict]], expected_cases: list[str] | None) -> list[str]:
     """Reasons the evidence for a model is incomplete: cases with no rows, or fewer repetitions than the rest."""
     reasons = []
@@ -217,12 +271,13 @@ def build_report(
     max_cost_per_call: float | None = None,
     baseline: str = BASELINE,
     expected_cases: list[str] | None = None,
+    planned: set[tuple[str, str, str, int]] | None = None,
 ) -> tuple[str, list[str]]:
     """Returns (markdown, reasons the gate fails). An empty list of reasons means the gate passes."""
     if not 0.0 <= min_pass_rate <= 1.0 or max_broken < 0 or max_urgency_downgrades < 0:
         raise ValueError("min_pass_rate must be between 0 and 1, and the allowed counts must not be negative")
-    if max_cost_per_call is not None and max_cost_per_call <= 0:
-        raise ValueError("max_cost_per_call must be positive")
+    if max_cost_per_call is not None and not (math.isfinite(max_cost_per_call) and max_cost_per_call > 0):
+        raise ValueError("max_cost_per_call must be a positive number")
 
     grouped: dict[str, dict[str, list[dict]]] = defaultdict(lambda: defaultdict(list))
     for row in rows:
@@ -232,10 +287,13 @@ def build_report(
     failures: list[str] = []
     if not rows:
         failures.append("no results to judge")
+    if planned is not None:
+        failures += plan_problems(rows, planned)
 
     for model, versions in sorted(grouped.items()):
         summaries = {version: summarise(version_rows) for version, version_rows in sorted(versions.items())}
-        failures += incomplete(model, versions, expected_cases)
+        if planned is None:
+            failures += incomplete(model, versions, expected_cases)
         lines += [f"## {model}", ""]
         lines += [
             "| version | pass rate | 95% interval | visible | held-out | category | urgency | refund | invoice "
@@ -263,6 +321,8 @@ def build_report(
             lines += [f"No {baseline} rows for this model, so nothing to compare against.", ""]
             failures.append(f"{model}: no {baseline} results")
             continue
+        if len(summaries) == 1:
+            failures.append(f"{model}: only {baseline} results, so there is no edited version to judge")
 
         for version, s in summaries.items():
             if version == baseline:
@@ -284,10 +344,12 @@ def build_report(
             if s["pass_rate"] < min_pass_rate:
                 failures.append(f"{model} {version}: pass rate {s['pass_rate']:.1%} is below {min_pass_rate:.1%}")
             delta = s["pass_rate"] - summaries[baseline]["pass_rate"]
+            paired = paired_change_ci(summaries[baseline]["fractions"], s["fractions"])
+            paired_text = f" (paired 95% interval {paired[1]:+.1%} to {paired[2]:+.1%})" if paired else ""
             lines += [
                 f"### {version} vs {baseline}",
                 "",
-                f"Pass rate {delta:+.1%}. Broken: {len(moved['broken'])}. "
+                f"Pass rate {delta:+.1%}{paired_text}. Broken: {len(moved['broken'])}. "
                 f"Fixed: {len(moved['fixed'])}. Flaky: {len(moved['flaky'])}. Missing: {len(moved['missing'])}. "
                 f"Urgency lowered: {len(lowered)}.",
                 "",
@@ -315,12 +377,22 @@ def main() -> None:
     args = parser.parse_args()
 
     run_dir = RUNS_DIR / args.run
+    planned = None
+    plan_failure = []
+    if args.gate:
+        manifest_path = run_dir / "manifest.json"
+        if manifest_path.exists():
+            planned = planned_jobs(json.loads(manifest_path.read_text()), [case.id for case in load_all_cases()])
+        else:
+            plan_failure = ["no manifest.json, so the run's plan cannot be checked"]
     report, failures = build_report(
         load_rows(run_dir), max_broken=args.max_broken, min_pass_rate=args.min_pass_rate,
         max_urgency_downgrades=args.max_urgency_downgrades, max_cost_per_call=args.max_cost_per_call,
         baseline=args.baseline,
         expected_cases=[case.id for case in load_all_cases()] if args.gate else None,
+        planned=planned,
     )
+    failures = plan_failure + failures
     (run_dir / "report.md").write_text(report)
     print(report)
 

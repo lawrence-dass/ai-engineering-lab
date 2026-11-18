@@ -440,3 +440,77 @@ def test_run_stops_starting_calls_once_the_budget_is_spent(tmp_path):
     assert 0 < len(rows) < 12 and summary["over_budget"] == 12 - len(rows)
     _, failures = build_report(rows, expected_cases=[case.id for case in load_cases()[:4]])
     assert any("no results" in r or "repetitions" in r for r in failures)  # incomplete evidence fails closed
+
+
+# --- the gate checks the evidence against the run's plan ------------------------
+
+from evals.report import paired_change_ci, planned_jobs
+
+
+def plan_for(models, versions, reps, case_ids):
+    return planned_jobs({"invocations": [{"models": models, "versions": versions, "reps": reps}]}, case_ids)
+
+
+def test_gate_fails_on_a_baseline_only_run(tmp_path):
+    run_stub(tmp_path, ["v1_baseline"])
+    _, failures = build_report(load_rows(tmp_path / "t"))
+    assert failures == ["haiku: only v1_baseline results, so there is no edited version to judge"]
+
+
+def test_gate_fails_when_every_case_has_fewer_repetitions_than_planned(tmp_path):
+    run_stub(tmp_path, ["v1_baseline", "v2_keep_it_quick"], limit=3, reps=1)
+    ids = [case.id for case in load_cases()[:3]]
+    _, failures = build_report(load_rows(tmp_path / "t"),
+                               planned=plan_for(["haiku"], ["v1_baseline", "v2_keep_it_quick"], 3, ids))
+    assert failures == ["haiku v1_baseline: 6 planned calls have no result",
+                        "haiku v2_keep_it_quick: 6 planned calls have no result"]
+
+
+def test_gate_fails_on_duplicate_calls_and_on_a_whole_missing_version(tmp_path):
+    run_stub(tmp_path, ["v1_baseline", "v2_keep_it_quick"], limit=2, reps=1)
+    rows = load_rows(tmp_path / "t")
+    rows.append(dict(rows[0]))  # the same job twice
+    ids = [case.id for case in load_cases()[:2]]
+    _, failures = build_report(rows, planned=plan_for(["haiku"], ["v1_baseline", "v2_keep_it_quick", "v3_add_example"], 1, ids))
+    assert any("recorded more than once" in f for f in failures)
+    assert "haiku v3_add_example: 2 planned calls have no result" in failures
+
+
+def test_gate_fails_on_calls_the_plan_did_not_ask_for(tmp_path):
+    run_stub(tmp_path, ["v1_baseline", "v2_keep_it_quick"], limit=2, reps=1)
+    ids = [case.id for case in load_cases()[:2]]
+    _, failures = build_report(load_rows(tmp_path / "t"), planned=plan_for(["haiku"], ["v1_baseline"], 1, ids))
+    assert any("did not ask for" in f for f in failures)
+
+
+def test_a_complete_planned_run_passes(tmp_path):
+    run_stub(tmp_path, ["v1_baseline", "v2_keep_it_quick"], limit=2, reps=2)
+    ids = [case.id for case in load_cases()[:2]]
+    assert build_report(load_rows(tmp_path / "t"),
+                        planned=plan_for(["haiku"], ["v1_baseline", "v2_keep_it_quick"], 2, ids))[1] == []
+
+
+def test_cost_cap_must_be_a_finite_positive_number(tmp_path):
+    run_stub(tmp_path, ["v1_baseline", "v2_keep_it_quick"])
+    rows = load_rows(tmp_path / "t")
+    for bad in (float("nan"), float("inf"), 0.0, -1.0):
+        with pytest.raises(ValueError):
+            build_report(rows, max_cost_per_call=bad)
+
+
+def test_paired_interval_is_built_from_per_case_differences():
+    base = {"a": 1.0, "b": 1.0, "c": 1.0, "d": 1.0}
+    cand = {"a": 0.0, "b": 0.0, "c": 1.0, "d": 1.0}
+    mean, low, high = paired_change_ci(base, cand)
+    assert mean == -0.5 and low <= mean <= high <= 0.0
+    assert paired_change_ci(base, {}) is None
+
+
+def test_three_way_split_has_no_majority_and_is_not_counted_right_or_wrong():
+    split = decide([answer(urgency="low"), answer(urgency="high"), answer(urgency="medium")])
+    assert split["answer"] is None and split["needs_review"] is True
+    rows = [{"model": "haiku", "version": "v1_baseline", "case_id": "x", "rep": i, "expected": EXPECTED,
+             "output": out, "passed": out == answer()}
+            for i, out in enumerate([answer(urgency="low"), answer(urgency="high"), answer(urgency="medium")])]
+    m = simulate(rows)[("haiku", "v1_baseline")]
+    assert (m["no_majority"], m["wrong_caught"], m["reviewed_right"]) == (1, 0, 0)

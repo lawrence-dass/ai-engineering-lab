@@ -12,6 +12,9 @@ Two rules are measured.
    calls per ticket and also sent a ticket to review when the calls disagree:
 
 - The answer for a ticket is the majority of its repeated calls, field by field.
+  When the calls split with no majority on a field, the ticket has no answer of
+  its own; it goes to review, and it is counted as "no majority", neither right
+  nor wrong.
 - The ticket goes to review when the calls disagree on a graded field, when a
   reply was unusable, or when a business rule fires (any account_access ticket).
 - The expected answer stands in for a reviewer who always corrects the ticket.
@@ -37,11 +40,14 @@ def load_rows(run_dir: Path) -> list[dict]:
     return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
 
 
+NO_MAJORITY = object()
+
+
 def majority(values: list):
-    """Most common value. On a tie, the value seen first wins."""
+    """The value more than half the calls gave, or NO_MAJORITY when there is none."""
     counts = Counter(json.dumps(value) for value in values)
-    best = max(counts.values())
-    return next(value for value in values if counts[json.dumps(value)] == best)
+    key, n = counts.most_common(1)[0]
+    return json.loads(key) if n > len(values) / 2 else NO_MAJORITY
 
 
 def decide(outputs: list[dict | None]) -> dict:
@@ -50,12 +56,14 @@ def decide(outputs: list[dict | None]) -> dict:
         return {"answer": None, "needs_review": True, "reasons": ["unusable_reply"]}
 
     answer = {field: majority([output[field] for output in outputs]) for field in GRADED_FIELDS}
+    if any(value is NO_MAJORITY for value in answer.values()):
+        answer = None
     reasons = [
         f"disagreement:{field}"
         for field in GRADED_FIELDS
         if len({json.dumps(output[field]) for output in outputs}) > 1
     ]
-    if answer["category"] in ALWAYS_REVIEW_CATEGORIES:
+    if answer and answer["category"] in ALWAYS_REVIEW_CATEGORIES:
         reasons.append(f"rule:{answer['category']}")
     return {"answer": answer, "needs_review": bool(reasons), "reasons": reasons}
 
@@ -72,13 +80,15 @@ def simulate(rows: list[dict]) -> dict[tuple[str, str], dict]:
 
     results: dict[tuple[str, str], dict] = defaultdict(
         lambda: {"tickets": 0, "reviewed": 0, "auto_right": 0, "auto_wrong": 0,
-                 "wrong_caught": 0, "reviewed_right": 0, "single_call_right": 0, "reasons": Counter(),
+                 "wrong_caught": 0, "reviewed_right": 0, "no_majority": 0, "single_call_right": 0,
+                 "reasons": Counter(),
                  "slipped": []}
     )
     for (model, version, case_id), calls in sorted(tickets.items()):
         calls.sort(key=lambda row: row["rep"])
         expected = calls[0]["expected"]
-        decision = decide([row["output"] for row in calls])
+        outputs = [row["output"] for row in calls]
+        decision = decide(outputs)
         right = is_correct(decision["answer"], expected)
         m = results[(model, version)]
         m["tickets"] += 1
@@ -86,7 +96,10 @@ def simulate(rows: list[dict]) -> dict[tuple[str, str], dict]:
         if decision["needs_review"]:
             m["reviewed"] += 1
             m["reasons"].update(decision["reasons"])
-            m["wrong_caught" if not right else "reviewed_right"] += 1
+            if decision["answer"] is None and all(output is not None for output in outputs):
+                m["no_majority"] += 1
+            else:
+                m["wrong_caught" if not right else "reviewed_right"] += 1
         else:
             m["auto_right" if right else "auto_wrong"] += 1
             if not right:
@@ -141,11 +154,13 @@ def build_review_report(rows: list[dict]) -> str:
         "## 2. Simulated: three calls per ticket, plus review when the calls disagree",
         "",
         "Answer = majority of the repeated calls. Review when the calls disagree on a graded field, "
-        "a reply was unusable, or the answer is account_access. The expected answer stands in for the reviewer.",
+        "a reply was unusable, or the answer is account_access. The expected answer stands in for the reviewer. "
+        "No majority = the calls split with no majority on a field, so there is no answer to call right or wrong; "
+        "those tickets go to review and are not counted as wrong answers.",
         "",
         "| Model | Version | Tickets | Automatic | Sent to review | Accuracy of automatic | Wrong answers | "
-        "Caught by review | Slipped through | Accuracy, one call, no review |",
-        "|---|---|---|---|---|---|---|---|---|---|",
+        "Caught by review | Slipped through | No majority | Accuracy, one call, no review |",
+        "|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for (model, version), m in sorted(results.items()):
         auto = m["auto_right"] + m["auto_wrong"]
@@ -153,7 +168,7 @@ def build_review_report(rows: list[dict]) -> str:
         lines.append(
             f"| {model} | {version} | {m['tickets']} | {pct(auto, m['tickets'])} | {pct(m['reviewed'], m['tickets'])} | "
             f"{pct(m['auto_right'], auto)} | {wrong} | {m['wrong_caught']} | {m['auto_wrong']} | "
-            f"{pct(m['single_call_right'], m['tickets'])} |"
+            f"{m['no_majority']} | {pct(m['single_call_right'], m['tickets'])} |"
         )
 
     lines += ["", "## Why tickets went to review", ""]

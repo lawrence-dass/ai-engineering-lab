@@ -31,34 +31,34 @@
 
 ## 2. Simulated: three calls per ticket, plus review when the calls disagree
 
-Answer = majority of the repeated calls. Review when the calls disagree on a graded field, a reply was unusable, or the answer is account_access. The expected answer stands in for the reviewer.
+Answer = majority of the repeated calls. Review when the calls disagree on a graded field, a reply was unusable, or the answer is account_access. The expected answer stands in for the reviewer. No majority = the calls split with no majority on a field, so there is no answer to call right or wrong; those tickets go to review and are not counted as wrong answers.
 
-| Model | Version | Tickets | Automatic | Sent to review | Accuracy of automatic | Wrong answers | Caught by review | Slipped through | Accuracy, one call, no review |
-|---|---|---|---|---|---|---|---|---|---|
-| haiku | v1_baseline | 50 | 86% | 14% | 86% | 6 | 0 | 6 | 88% |
-| haiku | v2_keep_it_quick | 50 | 88% | 12% | 89% | 5 | 0 | 5 | 90% |
-| haiku | v3_add_example | 50 | 88% | 12% | 84% | 8 | 1 | 7 | 84% |
-| haiku | v4_feel_heard | 50 | 88% | 12% | 86% | 7 | 1 | 6 | 86% |
-| haiku | v5_tidy_urgency | 50 | 88% | 12% | 73% | 12 | 0 | 12 | 76% |
-| haiku | v6_bundled_pr | 50 | 86% | 14% | 86% | 6 | 0 | 6 | 88% |
-| luna | v1_baseline | 50 | 84% | 16% | 86% | 7 | 1 | 6 | 86% |
-| luna | v2_keep_it_quick | 50 | 86% | 14% | 84% | 8 | 1 | 7 | 84% |
-| luna | v3_add_example | 50 | 86% | 14% | 84% | 8 | 1 | 7 | 86% |
-| luna | v4_feel_heard | 50 | 84% | 16% | 86% | 7 | 1 | 6 | 84% |
-| luna | v5_tidy_urgency | 50 | 78% | 22% | 77% | 15 | 6 | 9 | 72% |
-| luna | v6_bundled_pr | 50 | 84% | 16% | 83% | 8 | 1 | 7 | 84% |
-| opus | v1_baseline | 50 | 88% | 12% | 86% | 6 | 0 | 6 | 88% |
-| opus | v2_keep_it_quick | 50 | 88% | 12% | 86% | 6 | 0 | 6 | 88% |
-| opus | v3_add_example | 50 | 88% | 12% | 89% | 5 | 0 | 5 | 90% |
-| opus | v4_feel_heard | 50 | 86% | 14% | 88% | 5 | 0 | 5 | 90% |
-| opus | v5_tidy_urgency | 50 | 88% | 12% | 86% | 6 | 0 | 6 | 88% |
-| opus | v6_bundled_pr | 50 | 88% | 12% | 89% | 5 | 0 | 5 | 90% |
-| sol | v1_baseline | 50 | 88% | 12% | 86% | 6 | 0 | 6 | 88% |
-| sol | v2_keep_it_quick | 50 | 88% | 12% | 86% | 6 | 0 | 6 | 88% |
-| sol | v3_add_example | 50 | 88% | 12% | 86% | 6 | 0 | 6 | 88% |
-| sol | v4_feel_heard | 50 | 88% | 12% | 86% | 6 | 0 | 6 | 88% |
-| sol | v5_tidy_urgency | 50 | 86% | 14% | 88% | 5 | 0 | 5 | 90% |
-| sol | v6_bundled_pr | 50 | 88% | 12% | 86% | 6 | 0 | 6 | 88% |
+| Model | Version | Tickets | Automatic | Sent to review | Accuracy of automatic | Wrong answers | Caught by review | Slipped through | No majority | Accuracy, one call, no review |
+|---|---|---|---|---|---|---|---|---|---|---|
+| haiku | v1_baseline | 50 | 86% | 14% | 86% | 6 | 0 | 6 | 0 | 88% |
+| haiku | v2_keep_it_quick | 50 | 88% | 12% | 89% | 5 | 0 | 5 | 0 | 90% |
+| haiku | v3_add_example | 50 | 88% | 12% | 84% | 8 | 1 | 7 | 0 | 84% |
+| haiku | v4_feel_heard | 50 | 88% | 12% | 86% | 7 | 1 | 6 | 0 | 86% |
+| haiku | v5_tidy_urgency | 50 | 88% | 12% | 73% | 12 | 0 | 12 | 0 | 76% |
+| haiku | v6_bundled_pr | 50 | 86% | 14% | 86% | 6 | 0 | 6 | 0 | 88% |
+| luna | v1_baseline | 50 | 84% | 16% | 86% | 7 | 1 | 6 | 0 | 86% |
+| luna | v2_keep_it_quick | 50 | 86% | 14% | 84% | 8 | 1 | 7 | 0 | 84% |
+| luna | v3_add_example | 50 | 86% | 14% | 84% | 8 | 1 | 7 | 0 | 86% |
+| luna | v4_feel_heard | 50 | 84% | 16% | 86% | 7 | 1 | 6 | 0 | 84% |
+| luna | v5_tidy_urgency | 50 | 78% | 22% | 77% | 14 | 5 | 9 | 1 | 72% |
+| luna | v6_bundled_pr | 50 | 84% | 16% | 83% | 8 | 1 | 7 | 0 | 84% |
+| opus | v1_baseline | 50 | 88% | 12% | 86% | 6 | 0 | 6 | 0 | 88% |
+| opus | v2_keep_it_quick | 50 | 88% | 12% | 86% | 6 | 0 | 6 | 0 | 88% |
+| opus | v3_add_example | 50 | 88% | 12% | 89% | 5 | 0 | 5 | 0 | 90% |
+| opus | v4_feel_heard | 50 | 86% | 14% | 88% | 5 | 0 | 5 | 0 | 90% |
+| opus | v5_tidy_urgency | 50 | 88% | 12% | 86% | 6 | 0 | 6 | 0 | 88% |
+| opus | v6_bundled_pr | 50 | 88% | 12% | 89% | 5 | 0 | 5 | 0 | 90% |
+| sol | v1_baseline | 50 | 88% | 12% | 86% | 6 | 0 | 6 | 0 | 88% |
+| sol | v2_keep_it_quick | 50 | 88% | 12% | 86% | 6 | 0 | 6 | 0 | 88% |
+| sol | v3_add_example | 50 | 88% | 12% | 86% | 6 | 0 | 6 | 0 | 88% |
+| sol | v4_feel_heard | 50 | 88% | 12% | 86% | 6 | 0 | 6 | 0 | 88% |
+| sol | v5_tidy_urgency | 50 | 86% | 14% | 88% | 5 | 0 | 5 | 0 | 90% |
+| sol | v6_bundled_pr | 50 | 88% | 12% | 86% | 6 | 0 | 6 | 0 | 88% |
 
 ## Why tickets went to review
 
