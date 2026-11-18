@@ -1,0 +1,79 @@
+{
+  "run": "round3_fix",
+  "code": {
+    "commit": "712270453a76df2e23f9e071262f4532225c13f6",
+    "dirty": false
+  },
+  "models": {
+    "haiku": {
+      "requested": "claude-haiku-5-5",
+      "served": [
+        "claude-haiku-5-5"
+      ]
+    },
+    "luna": {
+      "requested": "gpt-6-luna",
+      "served": [
+        "gpt-6-luna"
+      ]
+    }
+  },
+  "settings": {
+    "effort": "low",
+    "max_tokens": 8000,
+    "call_timeout_s": 120,
+    "prompt_caching": true,
+    "sdk_version": "2.8.0",
+    "openai_sdk_version": "3.51.0"
+  },
+  "providers": {
+    "haiku": "anthropic",
+    "luna": "openai"
+  },
+  "prices_usd_per_million_tokens": {
+    "haiku": {
+      "input": 0.1,
+      "cache_read": 0.01,
+      "cache_write": 0.125,
+      "output": 0.5
+    },
+    "luna": {
+      "input": 0.1,
+      "cache_read": 0.01,
+      "cache_write": 0.125,
+      "output": 0.5
+    }
+  },
+  "totals": {
+    "result_rows": 600,
+    "error_rows": 0,
+    "cost_usd": 0.0326
+  },
+  "invocations": [
+    {
+      "started_at": "2026-11-18T19:43:45+00:00",
+      "finished_at": "2026-11-18T19:46:54+00:00",
+      "commit": "712270453a76df2e23f9e071262f4532225c13f6",
+      "dirty": false,
+      "models": [
+        "haiku",
+        "luna"
+      ],
+      "versions": [
+        "v1_baseline",
+        "v7_tidy_keep_lists"
+      ],
+      "reps": 3,
+      "concurrency": 4,
+      "budget_usd": 1.0,
+      "limit": null,
+      "cases": 50,
+      "heldout_cases": 10,
+      "skipped": 0,
+      "ran": 600,
+      "over_budget": 0,
+      "errors": 0,
+      "cost_usd": 0.0326
+    }
+  ]
+}
