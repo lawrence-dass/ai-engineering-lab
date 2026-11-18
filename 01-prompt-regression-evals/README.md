@@ -10,7 +10,7 @@ The suite runs 50 hand-labelled tickets through the feature and repeats each one
 
 It compares every edited prompt with the baseline on four models: a cheap one and a strong one (a step below the flagship) from each of two vendors. Those are Claude Haiku 5.5 and Claude Opus 5.5 from Anthropic, and GPT-6 Luna and GPT-6.1 Sol from OpenAI.
 
-A GitHub Actions job is set up to run the same check on every pull request that changes a prompt, and to fail it if a ticket broke. It has not run on GitHub yet.
+A GitHub Actions job runs the same check on every pull request that changes a prompt, and it's a required check on `main`. In [pull request #1](https://github.com/lawrence-dass/ai-engineering-lab/pull/1), the urgency tidy-up applied to the production prompt failed it: 6 tickets broken on Haiku and 6 on Luna, for $0.04, and the merge was blocked.
 
 The problem it addresses is set out in [PROBLEM.md](PROBLEM.md). The design is in [SOLUTION.md](SOLUTION.md).
 
@@ -176,7 +176,7 @@ The design, the alternatives that were turned down, and how each part of the pro
 - The test set was built to probe known risks, so it has more billing tickets than a real queue might. That makes v5's damage larger here than it might be on real traffic.
 - 3 calls per case can't tell a small change in reliability from chance. "Broken" is an alarm for clear regressions, not a proof.
 - Neither vendor's flagship model is tested, and every model ran at low effort.
-- The CI job has not yet run on GitHub.
+- The CI gate checks the two cheap models only. The strong models are run by hand before a release.
 
 ## Credits
 

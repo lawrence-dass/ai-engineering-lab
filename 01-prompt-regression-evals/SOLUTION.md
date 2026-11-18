@@ -348,7 +348,7 @@ The numbers match [PROBLEM.md, section 5](PROBLEM.md#5-parts-of-the-problem).
 | 1 | Names every changed ticket, with field and value | Met | `test_report_names_the_case_a_prompt_edit_broke` |
 | 2 | Separates broken from inconsistent | Met | `test_classify` |
 | 3 | Restartable without loss or double-counting | Met | `test_run_writes_one_row_per_job_and_resumes_without_duplicates` |
-| 4 | Runs in CI and fails when a ticket breaks | Met, not yet run on GitHub | `prompt-gate` job (5.24), `test_ci_plan_compares_a_changed_production_prompt_with_the_base_branch_copy` |
+| 4 | Runs in CI and fails when a ticket breaks | Met. Pull request #1 (the v5 edit on the production prompt) failed `prompt-gate`: 6 broken on Haiku, 6 on Luna, $0.04; merge blocked by the required check | `prompt-gate` job (5.24), `test_ci_plan_compares_a_changed_production_prompt_with_the_base_branch_copy` |
 | 5 | Adding a case is one line in a data file | Met | `cases/tickets.jsonl`, or a spreadsheet row through `evals/import_cases.py` |
 | 6 | Cost and duration recorded | Met | `runs/main/manifest.json`: $3.07 for 3,600 calls, with start and finish times per invocation |
 
@@ -356,7 +356,7 @@ The tests use a stand-in for the model. The full run is `runs/main/`; a first ru
 
 ## 9. Known gaps
 
-- **The CI gate has not run on GitHub yet.** The repository has not been pushed. It needs the two API keys stored as repository secrets.
+- **The required check and path filters.** `prompt-gate` is required on `main`, but the workflow only runs when this experiment's folder changes. A pull request that touches only another experiment will wait for a check that never starts. When experiment 02 arrives, the workflow should run on every pull request and skip its own work when nothing here changed.
 - **Nothing keeps the test set current.** There is no process for adding cases from real failures or retiring old ones.
 - **Only urgency has its own gate rule.** The other fields are covered by the broken-case rule.
 - **40 cases is below what the resources recommend for a pass rate.** The evaluation lesson in ai-engineering-from-scratch says 50 cases cannot detect a 5-point change and recommends 200 or more for release decisions. This suite is built to find which individual cases changed, which works at 40. Its pass rates should be read as rough.
