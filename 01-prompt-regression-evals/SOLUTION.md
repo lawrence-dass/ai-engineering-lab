@@ -3,9 +3,9 @@
 | | |
 |---|---|
 | **Owner** | Lawrence Dass |
-| **Status** | In review |
+| **Status** | Implemented |
 | **Created** | 2026-11-12 |
-| **Last reviewed** | 2026-11-18 |
+| **Last reviewed** | 2026-11-19 |
 | **Problem** | [PROBLEM.md](PROBLEM.md) (Approved) |
 | **How to run** | [README.md](README.md) |
 
@@ -423,3 +423,4 @@ What this experiment does that the reference project does not: it calls a live m
 | 2026-11-18 | After the full run and an independent review: the gate now checks results against the run's plan (5.13), the urgency rule is described as built (5.23), the report gives a paired interval for each edit's change, and the review simulation counts a three-way split as no majority. Status and cost updated from `runs/main/`. |
 | 2026-11-15 | Added two OpenAI models (5.2, 5.10, section 11). Cache reads, cache writes and reasoning tokens are recorded on every row and priced separately. |
 | 2026-11-15 | Recorded the blind labelling result and the decision on open question 3 (section 9, section 12). |
+| 2026-11-19 | Status set to Implemented after the article was published. From here the experiment only gets fixes. |
